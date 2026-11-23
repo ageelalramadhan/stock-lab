@@ -151,7 +151,7 @@
         ctx.fillStyle = col; ctx.beginPath(); ctx.arc(n.x, n.y, n.rr, 0, Math.PI * 2); ctx.fill();
         ctx.lineWidth = 1; ctx.strokeStyle = "rgba(17,17,16,0.9)"; ctx.stroke();
         if (big) {
-          const ph = (t * 0.28 + n.ang) % 1;
+          const ph = (((t * 0.28 + n.ang) % 1) + 1) % 1;
           ctx.globalAlpha = (1 - ph) * 0.8; ctx.strokeStyle = "#f0efec"; ctx.lineWidth = 1.2;
           ctx.beginPath(); ctx.arc(n.x, n.y, n.rr + 2 + ph * 12, 0, Math.PI * 2); ctx.stroke();
         }
