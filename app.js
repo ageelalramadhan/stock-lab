@@ -86,6 +86,7 @@
   seg("#view-seg", "view", (v) => {
     ["play", "paper", "map", "list", "track"].forEach((k) => ($("#" + k + "-view").hidden = v !== k));
     document.body.classList.toggle("playing", v === "play");
+    document.body.classList.toggle("cellview", v === "map");
     if (v === "list") renderList();
     if (v === "map") { resizeMap(); if (!settled) { settle(); } }
     if (v === "track") renderTrack();
@@ -295,7 +296,7 @@
   const sectors = [...new Set(cells.map((c) => c.sec))].filter((s) => s !== "Benchmark").sort();
   const maxDv = d3.max(cells, (c) => c.dv) || 1;
   const rScale = d3.scaleSqrt().domain([0, maxDv]).range([2.5, 15]);
-  const nodes = cells.map((c) => ({ id: c.s, c, r: rScale(c.dv) + (tentacles.has(c.s) ? 1.5 : 0) }));
+  const nodes = cells.filter((c) => c.sec !== "Benchmark").map((c) => ({ id: c.s, c, r: rScale(c.dv) + (tentacles.has(c.s) ? 1.5 : 0) }));
   const nodeById = Object.fromEntries(nodes.map((n) => [n.id, n]));
   const links = CELL.links.filter((l) => nodeById[l[0]] && nodeById[l[1]]).map((l) => ({ source: l[0], target: l[1], w: l[2] }));
   const neighbors = {};
@@ -363,7 +364,7 @@
       }
       ctx.closePath();
       const mg = ctx.createRadialGradient(cx, cy, 20, cx, cy, Math.max(W, Hh) * 0.5);
-      mg.addColorStop(0, "rgba(201,133,0,0.07)"); mg.addColorStop(0.5, "rgba(57,135,229,0.05)"); mg.addColorStop(1, "rgba(57,135,229,0.015)");
+      mg.addColorStop(0, "rgba(57,135,229,0.06)"); mg.addColorStop(0.5, "rgba(57,135,229,0.05)"); mg.addColorStop(1, "rgba(57,135,229,0.015)");
       ctx.fillStyle = mg; ctx.fill();
       ctx.strokeStyle = "rgba(240,239,236,0.14)"; ctx.lineWidth = 1.5 / k; ctx.stroke();
 
@@ -374,28 +375,11 @@
         ctx.beginPath(); ctx.moveTo(l.source.x, l.source.y); ctx.lineTo(l.target.x, l.target.y); ctx.stroke();
       });
 
-      let i = 0;
-      nodes.forEach((n) => {
-        if (!tentacles.has(n.id)) return;
-        i++;
-        const mx = (cx + n.x) / 2, my = (cy + n.y) / 2, dx = n.x - cx, dy = n.y - cy, len = Math.hypot(dx, dy) || 1;
-        const wob = Math.sin(t * 1.3 + i) * 18;
-        const l = live[n.id];
-        const pulse = l && l.pulse ? Math.max(0, 1 - (now - l.pulse) / 1200) : 0;
-        ctx.strokeStyle = `rgba(201,133,0,${0.22 + pulse * 0.6})`;
-        ctx.lineWidth = (1.2 + pulse * 1.5) / k;
-        const qx = mx - (dy / len) * wob, qy = my + (dx / len) * wob;
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.quadraticCurveTo(qx, qy, n.x, n.y); ctx.stroke();
-        // a spark travelling along the thread toward the brain
-        const u = 1 - ((t * 0.22 + i * 0.137) % 1), v = 1 - u;
-        ctx.fillStyle = `rgba(255,205,110,${0.25 + 0.6 * v})`;
-        ctx.beginPath(); ctx.arc(v * v * cx + 2 * v * u * qx + u * u * n.x, v * v * cy + 2 * v * u * qy + u * u * n.y, 1.7 / k, 0, Math.PI * 2); ctx.fill();
-      });
-
-      const nr = 16 + Math.sin(t * 2) * 2;
-      const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, nr * 2.2);
-      g.addColorStop(0, "rgba(201,133,0,0.9)"); g.addColorStop(0.45, "rgba(201,133,0,0.25)"); g.addColorStop(1, "rgba(201,133,0,0)");
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, nr * 2.2, 0, Math.PI * 2); ctx.fill();
+      // the middle of the cell: a calm glow in the colour of the whole market's day
+      const core = d3.color(colD1(TD.market ?? 0));
+      const g = ctx.createRadialGradient(cx, cy, 4, cx, cy, 90);
+      g.addColorStop(0, `rgba(${core.r},${core.g},${core.b},0.55)`); g.addColorStop(1, `rgba(${core.r},${core.g},${core.b},0)`);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, 90, 0, Math.PI * 2); ctx.fill();
 
       nodes.forEach((n) => {
         ctx.globalAlpha = focus && n !== focus && !near.has(n.id) ? 0.45 : 1;
@@ -406,14 +390,14 @@
         ctx.shadowBlur = 0;
         ctx.lineWidth = 1.5 / k; ctx.strokeStyle = surface; ctx.stroke();
         if (big >= 2.5) { // ripples: an unusually big day for this company
-          for (let w = 0; w < 2; w++) {
-            const ph = (t * 0.55 + n.index * 0.37 + w * 0.5) % 1;
+          for (let w = 0; w < 1; w++) {
+            const ph = (t * 0.3 + n.index * 0.37) % 1;
             ctx.globalAlpha = (1 - ph) * 0.7; ctx.strokeStyle = col; ctx.lineWidth = 1.4 / k;
             ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 3 + ph * 16, 0, Math.PI * 2); ctx.stroke();
           }
           ctx.globalAlpha = focus && n !== focus && !near.has(n.id) ? 0.45 : 1;
         }
-        if (tentacles.has(n.id) || n === focus) {
+        if (n === focus) {
           ctx.strokeStyle = "#f0efec"; ctx.lineWidth = (n === focus ? 2.4 : 1.6) / k;
           ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 2, 0, Math.PI * 2); ctx.stroke();
         }
@@ -431,7 +415,7 @@
       ctx.font = `${11 / k}px ui-sans-serif, system-ui, sans-serif`;
       ctx.textAlign = "center";
       nodes.forEach((n) => {
-        if (!(n === focus || n.r > 11 || Math.abs(n.c.tz || 0) >= 3 || (k > 1.6 && tentacles.has(n.id)) || k > 2.6)) return;
+        if (!(n === focus || n.r > 11 || Math.abs(n.c.tz || 0) >= 3 || k > 2.2)) return;
         ctx.fillStyle = n === focus ? "#f0efec" : "rgba(240,239,236,0.75)";
         ctx.fillText(n.id, n.x, n.y - n.r - 4 / k);
       });
@@ -440,6 +424,9 @@
       ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif";
       ctx.fillStyle = "rgba(143,142,134,0.9)";
       ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(240,239,236,0.95)";
+      ctx.fillText("WHOLE MARKET  " + (TD.market != null ? pct(TD.market) : ""), transform.applyX(W / 2), transform.applyY(Hh / 2) + 4);
+      ctx.fillStyle = "rgba(143,142,134,0.9)";
       sectors.forEach((s) => {
         const [x, y] = sectorCenter(s);
         const label = s.toUpperCase() + (secMove[s] != null ? "  " + pct(secMove[s]) : ""), half = ctx.measureText(label).width / 2 + 8;
