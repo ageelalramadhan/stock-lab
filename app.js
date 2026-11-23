@@ -187,8 +187,8 @@
         card("Just holding the S&P 500", last.spy, pct(last.spy / first.spy - 1, 0) + " in " + T.paper_months + " months") +
         card("Momentum rule", last.momentum, pct(last.momentum / first.momentum - 1, 0) + " in " + T.paper_months + " months");
       $("#paper-caveat").innerHTML = `Starting with ${eur(first.brain)} on ${first.time}. The brain's picks beat the S&amp;P 500 in <b>${T.paper_beat_spy} of ${T.paper_months}</b> months.
-        <b>Read this as an optimistic upper bound:</b> the test only includes companies that are in the S&amp;P 500 today, so it never held a company that later collapsed and was removed.
-        Twenty stocks from the same hot sector also swing much harder than the whole market, both ways. The live portfolio below is the honest test.`;
+        <b>This number is inflated, read it as a best case.</b> The test uses today's S&amp;P 500 list, which includes companies that only joined <i>because</i> they had already soared, and leaves out ones that crashed and were removed. A momentum strategy benefits hugely from that hindsight.
+        It was also a rough ride: the worst single month lost <b>${pct(Math.min(...P.slice(1).map((x) => x.b_ret)), 0)}</b>, against ${pct(Math.min(...P.slice(1).map((x) => x.s_ret)), 0)} for the S&amp;P 500. The live portfolio below has no hindsight, so it is the honest test.`;
       if (!paperChart) {
         paperChart = LC.createChart($("#paper-chart"), {
           autoSize: true,
@@ -502,7 +502,7 @@
       const ctx = `Market ${pct(m.market)}, its sector ${pct(m.sector)}, trading volume ${m.volume_x ?? "?"}x normal`;
       let why = `<b>${CAUSE[m.cause].label}</b>`;
       if (m.cause === "earnings" && m.surprise != null) why += `: profit ${m.surprise >= 0 ? "beat" : "missed"} estimates by ${pct(Math.abs(m.surprise), 0).replace("+", "")}`;
-      if (m.news && m.news.headline) why += `<br><a href="${esc(m.news.url)}" target="_blank" rel="noopener">${esc(m.news.headline)}</a> <span class="muted" style="display:inline">(${esc(m.news.source)})</span>`;
+      if (m.news && m.news.headline) why += `<br><span class="muted" style="display:inline">Headline that day:</span> <a href="${esc(m.news.url)}" target="_blank" rel="noopener">${esc(m.news.headline)}</a> <span class="muted" style="display:inline">(${esc(m.news.source)})</span>`;
       else if (m.cause === "company" || m.cause === "earnings") why += ' <span class="muted" style="display:inline">(headline lookup pending)</span>';
       return `<div class="move"><span class="num" style="border-color:${CAUSE[m.cause].color}">${i + 1}</span><span>${m.date}</span>
         <span class="${signCls(m.ret)}">${pct(m.ret)}</span><span class="why">${why}<span class="muted">${ctx}</span></span></div>`;

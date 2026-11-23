@@ -25,7 +25,8 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python scripts/cell.py
         env:
-          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}   # for earnings data; add it under Settings, Secrets
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}   # earnings + news headlines; set under Settings, Secrets
+          NEWS_PER_RUN: "900"                       # headlines looked up per night (about 1 per second)
       - name: Save new data and predictions
         run: |
           git config user.name "stock-lab-bot"
