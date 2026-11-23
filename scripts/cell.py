@@ -344,17 +344,17 @@ ODDS_PCT = {"year": "mom_12_1", "month": "rev_1m", "week": "ret_1w_pct", "jumpy"
 ODDS_KEYS = list(ODDS_PCT) + ["day", "mkt_1m", "mkt_vol"]
 
 
-def odds_x(df, stats):
+def odds_x(df, stats, keys=None):
     X = pd.DataFrame({k: df[c] - 0.5 for k, c in ODDS_PCT.items()}, index=df.index)
     X["day"] = df["day_z"].clip(-4, 4) / 4
     for k in ("mkt_1m", "mkt_vol"):
         X[k] = (df[k] - stats[k][0]) / (stats[k][1] or 1)
-    return X[ODDS_KEYS].fillna(0).clip(-3, 3)
+    return X[keys or ODDS_KEYS].fillna(0).clip(-3, 3)
 
 
-def odds_fit(train):
+def odds_fit(train, keys=None):
     stats = {k: (float(train[k].mean()), float(train[k].std())) for k in ("mkt_1m", "mkt_vol")}
-    m = LogisticRegression(C=0.05, max_iter=300).fit(odds_x(train, stats), (train["fwd"] > 0).astype(int))
+    m = LogisticRegression(C=0.05, max_iter=300).fit(odds_x(train, stats, keys), (train["fwd"] > 0).astype(int))
     return m, stats
 
 
@@ -364,16 +364,28 @@ def build_odds(panel, full, dates, months=36):
     weekly = set(dates[::-5])
     pool = panel[panel["date"].isin(weekly)].dropna(subset=["fwd", "mom_12_1"])
     test_idx = list(range(len(dates) - 1 - H, H * 13, -H))[:months][::-1]
-    got = []
-    for i in test_idx:
-        d, cutoff = dates[i], dates[i - H]
-        train = pool[pool["date"] <= cutoff]
-        test = panel[panel["date"] == d].dropna(subset=["fwd", "mom_12_1"])
-        if len(train) < 5000 or len(test) < 50:
-            continue
-        m, st = odds_fit(train)
-        got.append(pd.DataFrame({"p": m.predict_proba(odds_x(test, st))[:, 1], "up": (test["fwd"] > 0).values}))
-    o = pd.concat(got, ignore_index=True)
+    def walk(keys):
+        got = []
+        for i in test_idx:
+            d, cutoff = dates[i], dates[i - H]
+            train = pool[pool["date"] <= cutoff]
+            test = panel[panel["date"] == d].dropna(subset=["fwd", "mom_12_1"])
+            if len(train) < 5000 or len(test) < 50:
+                continue
+            m, st = odds_fit(train, keys)
+            got.append(pd.DataFrame({"p": m.predict_proba(odds_x(test, st, keys))[:, 1], "up": (test["fwd"] > 0).values}))
+        return got
+
+    # two honest candidates: with and without trying to read the whole market's mood.
+    # Market timing is notoriously unreliable, so keep it only if it tested better.
+    tried = {}
+    for name, keys in (("company clues only", ODDS_KEYS[:7]), ("company clues + market mood", ODDS_KEYS)):
+        g = walk(keys)
+        oo = pd.concat(g, ignore_index=True)
+        tried[name] = (float(((oo["p"] - oo["up"]) ** 2).mean()), keys, g, oo)
+        print(f"  odds variant '{name}': brier {tried[name][0]:.4f}")
+    best = min(tried, key=lambda k: tried[k][0])
+    _, KEYS, got, o = tried[best]
     base = float(o["up"].mean())
     bins = []
     for lo in range(30, 85, 5):
@@ -383,7 +395,7 @@ def build_odds(panel, full, dates, months=36):
     summary = {"months": len(got), "n": int(len(o)), "base": r(base, 3),
                "hit": r(((o["p"] >= 0.5) == o["up"]).mean(), 3), "hit_base": r(max(base, 1 - base), 3),
                "brier": r(((o["p"] - o["up"]) ** 2).mean(), 4), "brier_base": r(((base - o["up"]) ** 2).mean(), 4),
-               "spread": [r(o["p"].quantile(0.05), 3), r(o["p"].quantile(0.95), 3)], "bins": bins}
+               "spread": [r(o["p"].quantile(0.05), 3), r(o["p"].quantile(0.95), 3)], "bins": bins, "variant": best}
 
     # plain history for each clue: how often did such stocks end the month higher?
     up = pool["fwd"] > 0
@@ -400,9 +412,9 @@ def build_odds(panel, full, dates, months=36):
     summary["freq"] = freq
 
     # today's chances, and what moves each one
-    m, st = odds_fit(pool)
+    m, st = odds_fit(pool, KEYS)
     today = panel[panel["date"] == dates[-1]].dropna(subset=["mom_12_1"])
-    X = odds_x(today, st)
+    X = odds_x(today, st, KEYS)
     w, b = m.coef_[0], float(m.intercept_[0])
     sig = lambda z: 1 / (1 + np.exp(-z))
     z = b + X.values @ w
@@ -411,8 +423,8 @@ def build_odds(panel, full, dates, months=36):
     for n_, (sym, zi) in enumerate(zip(today["symbol"], z)):
         x = X.iloc[n_].values
         pf = float(sig(zi))
-        why = {k: float(pf - sig(zi - w[j] * x[j])) for j, k in enumerate(ODDS_KEYS[:7])}
-        why["market"] = float(pf - sig(zi - w[7] * x[7] - w[8] * x[8]))
+        why = {k: float(pf - sig(zi - w[j] * x[j])) for j, k in enumerate(KEYS[:7])}
+        why["market"] = float(pf - sig(zi - w[7] * x[7] - w[8] * x[8])) if len(KEYS) > 7 else 0.0
         rw, t = raw.loc[sym], today.iloc[n_]
         vals = {"year": [r(rw["mom_12_1"], 3), r(t["mom_12_1"], 2)], "month": [r(rw["rev_1m"], 3), r(t["rev_1m"], 2)],
                 "week": [r(rw["ret_1w"], 3), r(t["ret_1w_pct"], 2)], "jumpy": [r(rw["vol_3m"], 3), r(t["vol_3m"], 2)],
