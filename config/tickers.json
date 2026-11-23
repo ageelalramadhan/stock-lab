@@ -1,24 +1,18 @@
 {
   "horizon_days": 5,
   "history_years": 6,
-  "tickers": [
-    {"symbol": "AAPL",  "name": "Apple",              "group": "Tech"},
-    {"symbol": "NVDA",  "name": "Nvidia",             "group": "Semis"},
-    {"symbol": "TSLA",  "name": "Tesla",              "group": "Auto"},
-    {"symbol": "MSFT",  "name": "Microsoft",          "group": "Tech"},
-    {"symbol": "AMZN",  "name": "Amazon",             "group": "Tech"},
-    {"symbol": "GOOGL", "name": "Alphabet",           "group": "Tech"},
-    {"symbol": "META",  "name": "Meta",               "group": "Tech"},
-    {"symbol": "AMD",   "name": "AMD",                "group": "Semis"},
-    {"symbol": "AVGO",  "name": "Broadcom",           "group": "Semis"},
-    {"symbol": "NFLX",  "name": "Netflix",            "group": "Media"},
-    {"symbol": "PLTR",  "name": "Palantir",           "group": "Software"},
-    {"symbol": "JPM",   "name": "JPMorgan Chase",     "group": "Finance"},
-    {"symbol": "V",     "name": "Visa",               "group": "Finance"},
-    {"symbol": "COST",  "name": "Costco",             "group": "Retail"},
-    {"symbol": "LLY",   "name": "Eli Lilly",          "group": "Health"},
-    {"symbol": "XOM",   "name": "Exxon Mobil",        "group": "Energy"},
-    {"symbol": "SPY",   "name": "S&P 500 ETF",        "group": "Benchmark"},
-    {"symbol": "QQQ",   "name": "Nasdaq 100 ETF",     "group": "Benchmark"}
+  "tentacles": 50,
+  "pinned": ["AAPL", "NVDA", "TSLA", "SPY", "QQQ"],
+  "extras": [
+    {"symbol": "SPY",  "name": "S&P 500 ETF",       "sector": "Benchmark"},
+    {"symbol": "QQQ",  "name": "Nasdaq 100 ETF",    "sector": "Benchmark"},
+    {"symbol": "ASML", "name": "ASML Holding",      "sector": "Information Technology"},
+    {"symbol": "ARM",  "name": "Arm Holdings",      "sector": "Information Technology"},
+    {"symbol": "MELI", "name": "MercadoLibre",      "sector": "Consumer Discretionary"},
+    {"symbol": "PDD",  "name": "PDD Holdings",      "sector": "Consumer Discretionary"},
+    {"symbol": "SHOP", "name": "Shopify",           "sector": "Information Technology"},
+    {"symbol": "AZN",  "name": "AstraZeneca",       "sector": "Health Care"},
+    {"symbol": "MSTR", "name": "Strategy",          "sector": "Information Technology"},
+    {"symbol": "TEAM", "name": "Atlassian",         "sector": "Information Technology"}
   ]
 }
