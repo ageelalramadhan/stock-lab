@@ -274,7 +274,7 @@ def walk_forward(panel, dates, spy, months=36):
     weekly = set(dates[::-5])
     train_pool = panel[panel["date"].isin(weekly)].dropna(subset=["target"])
     test_idx = list(range(len(dates) - 1 - H, H * 13, -H))[:months][::-1]
-    rows, series = [], []
+    rows, series, obs = [], [], []
     cum_b, cum_m = 0.0, 0.0
     paper = []
     val = {"brain": START_EUR, "momentum": START_EUR, "spy": START_EUR}
@@ -287,6 +287,8 @@ def walk_forward(panel, dates, spy, months=36):
         cols = usable(train)
         pred = model().fit(train[cols], train["target"]).predict(test[cols])
         t = test.assign(pred=pred)
+        t = t.assign(pred_pct=t["pred"].rank(pct=True), brain_rank=t["pred"].rank(ascending=False, method="first"))
+        obs.append(t[["date", "symbol", "pred_pct", "brain_rank", "target", "fwd", "mom_12_1", "rev_1m", "vol_3m", "sector_3m"]])
         q = max(len(t) // 5, 1)
         ic = t["pred"].rank().corr(t["target"].rank())
         top = t.nlargest(q, "pred")["target"].mean()
@@ -321,7 +323,122 @@ def walk_forward(panel, dates, spy, months=36):
                 "t": float(spread.mean() / (spread.std(ddof=1) / np.sqrt(n))) if n > 2 and spread.std() > 0 else 0.0}
     beat = sum(1 for x in paper[1:] if x["b_ret"] > x["s_ret"])
     return {"brain": summary(r["ic"], r["spread"]), "momentum": summary(r["m_ic"], r["m_spread"]), "series": series,
-            "paper": paper, "paper_beat_spy": beat, "paper_months": len(paper) - 1, "cost": COST}
+            "paper": paper, "paper_beat_spy": beat, "paper_months": len(paper) - 1, "cost": COST,
+            "_obs": pd.concat(obs, ignore_index=True)}
+
+
+# ---------------- today's story (for the living cell) ----------------
+
+def today_summary(frames, sector_of):
+    """What happened on the latest trading day: market, industries, and each stock's move with its likely cause."""
+    rets = pd.DataFrame({s: df["Close"].pct_change().iloc[-70:] for s, df in frames.items()})
+    last, typical = rets.iloc[-1], rets.iloc[-64:-1].std()
+    sec = pd.Series({s: sector_of.get(s, "Other") for s in rets.columns})
+    sector_med = last.groupby(sec).median()
+    m = float(last.get(MARKET, 0) or 0)
+    per = {}
+    for s in rets.columns:
+        ret = last[s]
+        if pd.isna(ret) or pd.isna(typical[s]) or typical[s] == 0:
+            continue
+        z, sr = float(ret / typical[s]), float(sector_med[sec[s]])
+        same = lambda x: np.sign(x) == np.sign(ret) and abs(x) >= 0.5 * abs(ret)
+        if abs(z) < 1.5 or abs(ret) < 0.01:
+            cause = "quiet"
+        elif s in NOT_RANKED or same(m):
+            cause = "market"
+        elif same(sr):
+            cause = "sector"
+        else:
+            cause = "company"
+        v = frames[s]["Volume"]
+        vx = float(v.iloc[-1] / v.iloc[-51:-1].mean()) if len(v) > 51 and v.iloc[-51:-1].mean() > 0 else None
+        per[s] = {"ret": float(ret), "z": z, "cause": cause, "sector": sr, "vx": vx}
+    stocks = [s for s in per if s not in NOT_RANKED]
+    sectors = [{"name": k, "move": r(v), "n": int((sec == k).sum()),
+                "up": r(float((last[sec[sec == k].index] > 0).mean()), 2)}
+               for k, v in sector_med.items() if k != "Benchmark"]
+    movers = sorted([s for s in stocks if abs(per[s]["ret"]) >= 0.02], key=lambda s: -abs(per[s]["z"]))[:12]
+    return {"date": rets.index[-1].strftime("%Y-%m-%d"), "market": r(m), "per": per,
+            "up": int(sum(per[s]["ret"] > 0 for s in stocks)), "total": len(stocks),
+            "sectors": sorted(sectors, key=lambda x: -(x["move"] or 0)), "movers": movers}
+
+
+# ---------------- prediction game ----------------
+
+GAME_ROUNDS = 300
+LOOKBACK = 126   # about 6 months of chart before the decision
+
+
+def build_game(obs, full, frames, meta, latest, dates):
+    """Replay rounds from the honest test (the brain never saw the answer), today's live picks,
+    and real hit rates for each kind of clue."""
+    raw = full[["date", "symbol", "mom_12_1", "rev_1m", "vol_3m", "sector_3m"]].rename(
+        columns={c: "raw_" + c for c in ("mom_12_1", "rev_1m", "vol_3m", "sector_3m")})
+    o = obs.merge(raw, on=["date", "symbol"], how="left")
+    o["beat"] = o["target"] > 0
+    o["mkt"] = o.groupby("date")["fwd"].transform("median")
+    o["n"] = o.groupby("date")["symbol"].transform("count")
+
+    def rate(mask):
+        g = o[mask]
+        return {"rate": r(g["beat"].mean(), 3), "n": int(len(g))} if len(g) else {"rate": None, "n": 0}
+    lessons = {
+        "mom_high": rate(o["mom_12_1"] >= 0.8), "mom_low": rate(o["mom_12_1"] <= 0.2),
+        "rev_high": rate(o["rev_1m"] >= 0.8), "rev_low": rate(o["rev_1m"] <= 0.2),
+        "vol_high": rate(o["vol_3m"] >= 0.8), "vol_low": rate(o["vol_3m"] <= 0.2),
+        "sec_high": rate(o["sector_3m"] >= 0.8), "sec_low": rate(o["sector_3m"] <= 0.2),
+        "brain_top": rate(o["pred_pct"] >= 0.8), "brain_bottom": rate(o["pred_pct"] <= 0.2),
+        "brain_all": {"rate": r(((o["pred_pct"] >= 0.5) == o["beat"]).mean(), 3), "n": int(len(o))},
+    }
+
+    spy = frames[MARKET]["Close"]
+
+    def series(c, i, after):
+        w = c.iloc[i - LOOKBACK: i + after + 1]
+        return [round(float(v), 1) for v in (w / w.iloc[0] * 100)]
+
+    def clues(x):
+        return {"mom": [r(x["raw_mom_12_1"], 3), r(x["mom_12_1"], 2)], "rev": [r(x["raw_rev_1m"], 3), r(x["rev_1m"], 2)],
+                "vol": [r(x["raw_vol_3m"], 3), r(x["vol_3m"], 2)], "sec": [r(x["raw_sector_3m"], 3), r(x["sector_3m"], 2)]}
+
+    pool = o[(o["target"].abs() > 0.005)].sample(frac=1, random_state=42)
+    rounds, market = [], {}
+    for _, x in pool.iterrows():
+        if len(rounds) >= GAME_ROUNDS:
+            break
+        s, d = x["symbol"], pd.Timestamp(x["date"])
+        c = frames[s]["Close"]
+        i, j = c.index.get_indexer([d])[0], spy.index.get_indexer([d])[0]
+        if i < LOOKBACK or j < LOOKBACK or i + H >= len(c) or j + H >= len(spy) or pd.isna(x["raw_vol_3m"]):
+            continue
+        ds = d.strftime("%Y-%m-%d")
+        market.setdefault(ds, series(spy, j, H))
+        rounds.append({"id": f"{s}|{ds}", "s": s, "n": meta[s]["name"], "sec": meta[s]["sector"], "d": ds,
+                       "px": series(c, i, H), "clues": clues(x), "ret": r(x["fwd"], 3), "mkt": r(x["mkt"], 3),
+                       "beat": bool(x["beat"]), "bp": r(x["pred_pct"], 2), "br": int(x["brain_rank"]), "of": int(x["n"])})
+
+    # today's live picks: 5 well-known (heavily traded) stocks, a new set each day
+    today = dates[-1]
+    L = latest.reset_index().merge(raw[raw["date"] == today].drop(columns="date"), on="symbol", how="left")
+    big = L[L["size"] >= 0.7].dropna(subset=["raw_vol_3m"])
+    picks = big.sample(n=min(5, len(big)), random_state=int(today.strftime("%Y%m%d")))
+    j = len(spy) - 1
+    live = {"date": today.strftime("%Y-%m-%d"), "market": series(spy, j, 0), "picks": []}
+    for _, x in picks.iterrows():
+        c = frames[x["symbol"]]["Close"]
+        if len(c) <= LOOKBACK:
+            continue
+        live["picks"].append({"s": x["symbol"], "n": meta[x["symbol"]]["name"], "sec": meta[x["symbol"]]["sector"],
+                              "px": series(c, len(c) - 1, 0), "clues": clues(x), "close": r(c.iloc[-1], 2),
+                              "bp": r(x["pct"], 2), "br": int(x["rank"]), "of": int(len(latest))})
+
+    # recent closing prices, so the browser can score live guesses a month later
+    recent = dates[-60:]
+    closes = pd.DataFrame({s: frames[s]["Close"].reindex(recent) for s in latest.index})
+    px = {s: [None if pd.isna(v) else round(float(v), 2) for v in closes[s]] for s in closes.columns}
+    return {"horizon": H, "lookback": LOOKBACK, "lessons": lessons, "rounds": rounds, "market": market, "live": live,
+            "closes": {"dates": [d.strftime("%Y-%m-%d") for d in recent], "px": px}}
 
 
 # ---------------- why did it move ----------------
@@ -530,6 +647,7 @@ def main():
     dates = pd.DatetimeIndex(dates)
 
     test = walk_forward(panel, dates, frames[MARKET]["Close"])
+    obs = test.pop("_obs")
     print("Backtest brain:", test["brain"])
     print("Backtest momentum:", test["momentum"])
 
@@ -583,6 +701,13 @@ def main():
     earn = earnings if earnings is not None else pd.DataFrame()
     moves = find_moves(frames, {s: meta[s]["sector"] for s in frames}, earn)
     attach_news(moves, tent)
+    tday = today_summary(frames, {s: meta[s]["sector"] for s in frames})
+    tnews = {s: {"top": [{"date": tday["date"], "ret": tday["per"][s]["ret"], "cause": "company"}]} for s in tday["movers"]}
+    attach_news(tnews, set(tday["movers"]))
+    per = tday.pop("per")
+    tday["movers"] = [{"s": s, "n": meta[s]["name"], "sec": meta[s]["sector"], "ret": r(per[s]["ret"]), "z": r(per[s]["z"], 1),
+                       "cause": per[s]["cause"], "sector": r(per[s]["sector"]), "vx": r(per[s]["vx"], 1),
+                       "news": tnews[s]["top"][0].get("news")} for s in tday["movers"]]
     today = dates[-1]
     mom_now = full.sort_values("date").groupby("symbol")["mom_12_1"].last()
     cells = []
@@ -650,6 +775,8 @@ def main():
                       "rk": int(L["rank"]) if L is not None else None, "pct": r(L["pct"], 3) if L is not None else None,
                       "sc": r(score), "mom": r(mom_now.get(s)),
                       "en": next_e, "es": r(last_e["surprise"]) if last_e is not None else None,
+                      "tz": r(per[s]["z"], 1) if s in per else None, "tc": per[s]["cause"] if s in per else None,
+                      "tsr": r(per[s]["sector"]) if s in per else None, "tvx": r(per[s]["vx"], 1) if s in per else None,
                       "t": 1 if s in tent else 0, "pin": 1 if s in PINNED else 0})
 
     keep = {f"{s}.js" for s in frames}
@@ -660,9 +787,13 @@ def main():
     out = {"generated": run_date, "horizon_days": H, "data_through": today.strftime("%Y-%m-%d"),
            "universe_size": len(cells), "ranked": int(len(latest)), "tentacles": tentacles,
            "snapshots": int(len(train)), "inputs": [LABELS[c] for c in cols], "test": test, "importance": importance, "baskets": baskets,
-           "basket_size": BASKET, "paper_live": live_paper, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
+           "basket_size": BASKET, "today": tday, "paper_live": live_paper, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
            "runtime_min": round((time.time() - t0) / 60, 1)}
     write_js(DATA / "cell.js", "window.CELL=", out)
+    game = build_game(obs, full, frames, meta, latest, dates)
+    game["generated"] = run_date
+    write_js(DATA / "game.js", "window.GAME=", game)
+    print(f"Game: {len(game['rounds'])} replay rounds, {len(game['live']['picks'])} live picks")
     print(f"Done in {out['runtime_min']} min: {len(cells)} stocks, {len(latest)} ranked, {len(tentacles)} tentacles")
 
 

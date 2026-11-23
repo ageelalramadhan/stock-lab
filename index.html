@@ -6,7 +6,7 @@
 <title>Stock Lab</title>
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="playing">
 <header class="top">
   <div class="brand">
     <h1>Stock Lab</h1>
@@ -24,10 +24,11 @@
   <section class="panel left">
     <div class="panel-head">
       <div class="seg" id="view-seg">
-        <button data-view="paper" class="on">Paper portfolio</button>
+        <button data-view="play" class="on">Play</button>
+        <button data-view="map">Living cell</button>
+        <button data-view="paper">Paper portfolio</button>
         <button data-view="list">Rankings</button>
         <button data-view="track">Test details</button>
-        <button data-view="map">Cell map</button>
       </div>
       <div class="tools">
         <input id="search" type="search" placeholder="Find a stock, e.g. MSFT" autocomplete="off" list="sym-list">
@@ -35,7 +36,9 @@
       </div>
     </div>
 
-    <div id="paper-view">
+    <div id="play-view"></div>
+
+    <div id="paper-view" hidden>
       <div class="track-intro">
         <h2>If you had followed the brain with pretend money</h2>
         <p class="note">Every month: split the money equally across the brain's <b>top <span class="bsize"></span></b> stocks, hold for one month, then swap to the new top <span class="bsize"></span>.
@@ -58,20 +61,25 @@
     </div>
 
     <div id="map-view" hidden>
+      <div class="story" id="story"></div>
       <div class="map-tools">
         <span class="muted small">Color shows</span>
         <div class="seg" id="color-seg">
-          <button data-color="rank" class="on">Brain's ranking</button>
-          <button data-color="d1">Today's move</button>
+          <button data-color="d1" class="on">The latest day's move</button>
+          <button data-color="rank">Brain's ranking for next month</button>
         </div>
       </div>
       <div id="map-wrap"><canvas id="map"></canvas></div>
       <div class="map-legend">
-        <span class="scale"><span id="scale-lo">Bottom</span><i class="ramp"></i><span id="scale-hi">Top</span></span>
-        <span><i class="ring"></i>Tentacle (brain's top picks + pinned, streams live)</span>
-        <span><i class="curve"></i>Thread to the shared brain</span>
-        <span><i class="link"></i>Moves together (last 60 days)</span>
-        <span class="muted">Dot size = trading volume</span>
+        <span class="scale"><span id="scale-lo">fell 4%</span><i class="ramp"></i><span id="scale-hi">rose 4%</span></span>
+        <span><i class="ripple"></i>Rippling = an unusually big day for that company</span>
+        <span><i class="curve"></i>Golden thread = one of the brain's top picks</span>
+        <span><i class="link"></i>Thin line = two companies that move together</span>
+        <span class="muted">Bigger dot = more heavily traded. Click any dot.</span>
+      </div>
+      <div class="card wide">
+        <h3>The biggest moves of the day, and why <span class="muted small">(click one to find it in the cell)</span></h3>
+        <div id="movers"></div>
       </div>
     </div>
 
@@ -138,6 +146,7 @@
         <button data-days="300">1Y</button>
       </div>
     </div>
+    <div class="card explain" id="explain"></div>
     <div class="legend">
       <span><i class="sw candle"></i>Price (hollow = up day)</span>
       <span><i class="sw ln ma20"></i>20-day avg</span>
@@ -191,6 +200,8 @@
 <script src="lib/lightweight-charts.standalone.production.js"></script>
 <script src="lib/d3.min.js"></script>
 <script src="data/cell.js"></script>
+<script src="data/game.js"></script>
 <script src="app.js"></script>
+<script src="play.js"></script>
 </body>
 </html>

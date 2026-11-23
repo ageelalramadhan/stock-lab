@@ -25,7 +25,7 @@
   const details = (window.STOCK_DETAIL = window.STOCK_DETAIL || {});
   const T = CELL.test || {}, B = T.brain || {}, M = T.momentum || {};
   let selected = (cells.find((c) => c.rk === 1) || cells[0]).s;
-  let rangeDays = 126, sortKey = "rank", scope = "all", colorKey = "rank";
+  let rangeDays = 126, sortKey = "rank", scope = "all", colorKey = "d1";
 
   $("#sym-list").innerHTML = cells.map((c) => `<option value="${c.s}">${c.n}</option>`).join("");
 
@@ -84,7 +84,8 @@
     });
   }
   seg("#view-seg", "view", (v) => {
-    ["paper", "map", "list", "track"].forEach((k) => ($("#" + k + "-view").hidden = v !== k));
+    ["play", "paper", "map", "list", "track"].forEach((k) => ($("#" + k + "-view").hidden = v !== k));
+    document.body.classList.toggle("playing", v === "play");
     if (v === "list") renderList();
     if (v === "map") { resizeMap(); if (!settled) { settle(); } }
     if (v === "track") renderTrack();
@@ -92,8 +93,8 @@
   });
   seg("#color-seg", "color", (v) => {
     colorKey = v;
-    $("#scale-lo").textContent = v === "rank" ? "Bottom" : "-4%";
-    $("#scale-hi").textContent = v === "rank" ? "Top" : "+4%";
+    $("#scale-lo").textContent = v === "rank" ? "expected to trail" : "fell 4%";
+    $("#scale-hi").textContent = v === "rank" ? "expected to lead" : "rose 4%";
   });
   seg("#scope-seg", "scope", (v) => { scope = v; renderList(); });
   seg("#sort-seg", "sort", (v) => { sortKey = v; renderList(); });
@@ -200,8 +201,8 @@
         [["brain", "#3987e5"], ["spy", "#c98500"], ["momentum", css("--text-muted")]].forEach(([k, col]) => {
           trackLine(paperChart, col).setData(P.map((x) => ({ time: x.time, value: x[k] })));
         });
-        paperChart.timeScale().fitContent();
       }
+      paperChart.timeScale().fitContent();
     }
     const L = CELL.paper_live || {};
     const hold = L.holdings || [];
@@ -230,6 +231,62 @@
   });
   function trackLine(ch, color) {
     return ch.addLineSeries({ color, lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+  }
+
+  // ---------- today's story ----------
+  const TD = CELL.today || { sectors: [], movers: [] };
+  const secMove = Object.fromEntries((TD.sectors || []).map((x) => [x.name, x.move]));
+  const LESS = (window.GAME && window.GAME.lessons) || {};
+  const wordMove = (x) => (x == null ? "did not trade" : Math.abs(x) < 0.0005 ? "was flat" : (x > 0 ? "rose " : "fell ") + (Math.abs(x) * 100).toFixed(1) + "%");
+  const dayName = (d) => (d ? new Date(d + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }) : "the latest day");
+  const CAUSE_TXT = {
+    company: ["Company news", "Neither the market nor its industry moved like this, so the cause is something about this company itself."],
+    sector: ["Its whole industry moved", "Its industry moved the same way, which usually means news that affects all of those companies at once."],
+    market: ["The whole market moved", "Most stocks moved the same way that day, so this says little about the company itself."],
+    quiet: ["A normal day", "A move this size is ordinary for this stock. Small daily moves are mostly noise and carry no message."],
+  };
+  function renderStory() {
+    if (!TD.date) { $("#story").innerHTML = ""; $("#movers").innerHTML = '<p class="note">Arrives with the next nightly run.</p>'; return; }
+    const S = TD.sectors, best = S[0], worst = S[S.length - 1];
+    const share = TD.total ? TD.up / TD.total : 0.5;
+    const mood = share >= 0.65 ? "A broad up day: most companies rose together." : share <= 0.35 ? "A broad down day: most companies fell together."
+      : "A mixed day: about as many companies rose as fell, so company and industry news mattered more than the overall mood.";
+    $("#story").innerHTML = `<h2>The cell on ${dayName(TD.date)}</h2>
+      <p>The market as a whole <b>${wordMove(TD.market)}</b>. <b>${TD.up} of ${TD.total}</b> companies went up. ${mood}
+      ${best && worst ? `Strongest industry: <b>${esc(best.name)}</b> (${pct(best.move)}). Weakest: <b>${esc(worst.name)}</b> (${pct(worst.move)}).` : ""}</p>`;
+    $("#movers").innerHTML = (TD.movers || []).map((m) => {
+      const ct = CAUSE_TXT[m.cause] || CAUSE_TXT.company;
+      const news = m.news && m.news.headline ? `<br><span class="muted" style="display:inline">Headline that day:</span> <a href="${esc(m.news.url)}" target="_blank" rel="noopener">${esc(m.news.headline)}</a> <span class="muted" style="display:inline">(${esc(m.news.source)})</span>` : "";
+      return `<div class="move" data-sym="${esc(m.s)}"><span class="num">${m.ret > 0 ? "+" : "-"}</span><span><b>${esc(m.s)}</b><span class="sub">${esc(m.n)}</span></span>
+        <span class="${signCls(m.ret)}">${pct(m.ret)}</span>
+        <span class="why"><b>${ct[0]}</b>${news}<span class="muted">${Math.abs(m.z).toFixed(1)}x its normal daily move. Its industry ${wordMove(m.sector)}${m.vx ? ", trading was " + m.vx + "x the usual amount" : ""}.</span></span></div>`;
+    }).join("") || '<p class="note">No unusually big moves on this day.</p>';
+  }
+  $("#movers").addEventListener("click", (e) => {
+    if (e.target.closest("a")) return;
+    const row = e.target.closest("[data-sym]");
+    if (row) { select(row.dataset.sym); $("#map-wrap").scrollIntoView({ block: "center", behavior: "smooth" }); }
+  });
+
+  // one plain-language card: what did this stock just do, and what does that tell you
+  function renderExplain() {
+    const c = bySym[selected];
+    if (!c || c.d1 == null || c.tc == null) { $("#explain").innerHTML = ""; return; }
+    const ct = CAUSE_TXT[c.tc] || CAUSE_TXT.quiet, z = Math.abs(c.tz || 0);
+    const mv = (TD.movers || []).find((m) => m.s === c.s);
+    const news = mv && mv.news && mv.news.headline ? `<p><span class="muted">Headline that day:</span> <a href="${esc(mv.news.url)}" target="_blank" rel="noopener">${esc(mv.news.headline)}</a> <span class="muted">(${esc(mv.news.source)})</span></p>` : "";
+    let next = "";
+    const k = c.d1 > 0 ? "rev_high" : "rev_low", L = LESS[k];
+    if (c.tc !== "quiet" && L && L.rate != null) {
+      next = `<p><b>What it says about what comes next:</b> less than it feels like. Over the last 3 years, stocks coming off a big ${c.d1 > 0 ? "rise" : "fall"} did better than most others in the following month <b>${Math.round(L.rate * 100)}%</b> of the time, where 50% is a coin flip.
+        A big move tells you investors changed their minds today. It does not tell you they will keep changing them in the same direction.</p>`;
+    }
+    const l = live[c.s];
+    const now = l && l.price && l.prevClose ? `<p class="muted small">Right now (live): ${wordMove(l.price / l.prevClose - 1)} today.</p>` : "";
+    $("#explain").innerHTML = `<h3>What just happened, in plain words</h3>
+      <p>On ${dayName(TD.date)}, ${esc(c.s)} <b>${wordMove(c.d1)}</b>. That is <b>${z.toFixed(1)}x</b> its normal daily move${z >= 2.5 ? ", which is unusually big" : z >= 1.5 ? ", bigger than usual" : ""}.
+        The market ${wordMove(TD.market)} and its industry ${wordMove(c.tsr)}.</p>
+      <p><span class="tag ${c.tc === "quiet" ? "warn" : "good"}"><i style="background:var(--accent)"></i>${ct[0]}</span> ${ct[1]}</p>${news}${next}${now}`;
   }
 
   // ---------- cell map ----------
@@ -297,6 +354,19 @@
       const focus = hover || nodeById[selected];
       const near = focus ? neighbors[focus.id] || new Set() : new Set();
 
+      // the cell's membrane: a soft, slowly breathing outline
+      ctx.beginPath();
+      for (let a = 0; a <= Math.PI * 2 + 0.01; a += 0.05) {
+        const wob = 1 + 0.025 * Math.sin(3 * a + t * 0.5) + 0.018 * Math.sin(5 * a - t * 0.35) + 0.012 * Math.sin(8 * a + t * 0.8);
+        const x = cx + Math.cos(a) * W * 0.485 * wob, y = cy + Math.sin(a) * Hh * 0.485 * wob;
+        if (a === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      const mg = ctx.createRadialGradient(cx, cy, 20, cx, cy, Math.max(W, Hh) * 0.5);
+      mg.addColorStop(0, "rgba(201,133,0,0.07)"); mg.addColorStop(0.5, "rgba(57,135,229,0.05)"); mg.addColorStop(1, "rgba(57,135,229,0.015)");
+      ctx.fillStyle = mg; ctx.fill();
+      ctx.strokeStyle = "rgba(240,239,236,0.14)"; ctx.lineWidth = 1.5 / k; ctx.stroke();
+
       ctx.lineWidth = 0.6 / k;
       links.forEach((l) => {
         const hot = focus && (l.source.id === focus.id || l.target.id === focus.id);
@@ -314,7 +384,12 @@
         const pulse = l && l.pulse ? Math.max(0, 1 - (now - l.pulse) / 1200) : 0;
         ctx.strokeStyle = `rgba(201,133,0,${0.22 + pulse * 0.6})`;
         ctx.lineWidth = (1.2 + pulse * 1.5) / k;
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.quadraticCurveTo(mx - (dy / len) * wob, my + (dx / len) * wob, n.x, n.y); ctx.stroke();
+        const qx = mx - (dy / len) * wob, qy = my + (dx / len) * wob;
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.quadraticCurveTo(qx, qy, n.x, n.y); ctx.stroke();
+        // a spark travelling along the thread toward the brain
+        const u = 1 - ((t * 0.22 + i * 0.137) % 1), v = 1 - u;
+        ctx.fillStyle = `rgba(255,205,110,${0.25 + 0.6 * v})`;
+        ctx.beginPath(); ctx.arc(v * v * cx + 2 * v * u * qx + u * u * n.x, v * v * cy + 2 * v * u * qy + u * u * n.y, 1.7 / k, 0, Math.PI * 2); ctx.fill();
       });
 
       const nr = 16 + Math.sin(t * 2) * 2;
@@ -324,9 +399,20 @@
 
       nodes.forEach((n) => {
         ctx.globalAlpha = focus && n !== focus && !near.has(n.id) ? 0.45 : 1;
-        ctx.fillStyle = nodeColor(n);
+        const col = nodeColor(n), big = colorKey === "d1" ? Math.abs(n.c.tz || 0) : 0;
+        if (big >= 2) { ctx.shadowColor = col; ctx.shadowBlur = Math.min(26, 6 * big); }
+        ctx.fillStyle = col;
         ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
         ctx.lineWidth = 1.5 / k; ctx.strokeStyle = surface; ctx.stroke();
+        if (big >= 2.5) { // ripples: an unusually big day for this company
+          for (let w = 0; w < 2; w++) {
+            const ph = (t * 0.55 + n.index * 0.37 + w * 0.5) % 1;
+            ctx.globalAlpha = (1 - ph) * 0.7; ctx.strokeStyle = col; ctx.lineWidth = 1.4 / k;
+            ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 3 + ph * 16, 0, Math.PI * 2); ctx.stroke();
+          }
+          ctx.globalAlpha = focus && n !== focus && !near.has(n.id) ? 0.45 : 1;
+        }
         if (tentacles.has(n.id) || n === focus) {
           ctx.strokeStyle = "#f0efec"; ctx.lineWidth = (n === focus ? 2.4 : 1.6) / k;
           ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 2, 0, Math.PI * 2); ctx.stroke();
@@ -345,7 +431,7 @@
       ctx.font = `${11 / k}px ui-sans-serif, system-ui, sans-serif`;
       ctx.textAlign = "center";
       nodes.forEach((n) => {
-        if (!(n === focus || n.r > 11 || (k > 1.6 && tentacles.has(n.id)) || k > 2.6)) return;
+        if (!(n === focus || n.r > 11 || Math.abs(n.c.tz || 0) >= 3 || (k > 1.6 && tentacles.has(n.id)) || k > 2.6)) return;
         ctx.fillStyle = n === focus ? "#f0efec" : "rgba(240,239,236,0.75)";
         ctx.fillText(n.id, n.x, n.y - n.r - 4 / k);
       });
@@ -356,7 +442,7 @@
       ctx.textAlign = "center";
       sectors.forEach((s) => {
         const [x, y] = sectorCenter(s);
-        const label = s.toUpperCase(), half = ctx.measureText(label).width / 2 + 8;
+        const label = s.toUpperCase() + (secMove[s] != null ? "  " + pct(secMove[s]) : ""), half = ctx.measureText(label).width / 2 + 8;
         const sx = Math.min(W - half, Math.max(half, transform.applyX(x + (x - W / 2) * 0.33)));
         const sy = Math.min(Hh - 8, Math.max(16, transform.applyY(y + (y - Hh / 2) * 0.38)));
         ctx.fillText(label, sx, sy);
@@ -525,6 +611,7 @@
     const t = today(c);
     $("#sel-price").textContent = money(price(c));
     $("#sel-change").innerHTML = `<span class="${signCls(t)}">${pct(t, 2)} today</span>`;
+    renderExplain();
   }
   function renderDetail() {
     const d = details[selected];
@@ -582,6 +669,14 @@
     renderList();
     loadDetail(sym, () => { if (selected === sym) { renderDetail(); drawChart(true); } });
   }
+
+  // lets the game open a company's page
+  window.STOCKLAB_OPEN = (sym) => {
+    if (!bySym[sym]) return;
+    $('#view-seg button[data-view="list"]').click();
+    select(sym);
+    window.scrollTo({ top: 0 });
+  };
 
   // ---------- live data ----------
   const status = (state, text) => { $("#live-status").className = "pill " + state; $("#live-text").textContent = text; };
@@ -657,6 +752,7 @@
 
   // ---------- start ----------
   renderStats();
+  renderStory();
   renderPaper();
   requestAnimationFrame(draw);
   select(selected);
