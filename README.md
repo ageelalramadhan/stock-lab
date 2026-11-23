@@ -1,19 +1,22 @@
 # Stock Lab
 
-A personal learning "cell" for the US stock market: about 510 stocks, one shared brain, and 50 live tentacles. Not financial advice.
+A personal learning "cell" for the US stock market by Ageel Alramadhan. Not financial advice.
+
+## The question it answers
+Over the next month, which stocks will do better or worse **than the other stocks**? Ranking stocks against each other removes the market's daily noise.
 
 ## How it works
-1. **Every weekday night** (22:15 UTC) a GitHub Action runs `scripts/cell.py`.
-2. **Universe:** S&P 500 members (list refreshed weekly from Wikipedia) plus extras in `config/tickers.json`.
-3. **Shared brain:** one model learns from every stock at once, using each stock's own movement plus market and sector context.
-4. **Honesty check:** a walk-forward backtest scores each stock on days the brain never saw. The "luck score" shows whether its edge is bigger than chance.
-5. **Tentacles:** pinned stocks plus the stocks with the strongest edge. These stream live, and the list changes as the brain learns.
-6. **Diary:** every forecast is saved to `data/predictions_log.csv` and scored once its day arrives. The live record gradually counts more than the backtest.
-
-## View it
-In GitHub Desktop: Fetch origin, then Pull. Open `index.html` in your browser. Add your Finnhub key once with **Live data key**.
+1. **Every weekday night** (22:15 UTC) GitHub runs `scripts/cell.py` (workflow "Nightly retrain"), then publishes the site (workflow "Publish site").
+2. **Universe:** S&P 500 members (refreshed weekly from Wikipedia) plus extras in `config/tickers.json`.
+3. **Inputs:** 12-1 and 6-1 month momentum, last month's move (short-term reversal), trend, volatility, beta, size, sector strength, and earnings surprises (Finnhub, builds up nightly).
+4. **Honest test:** 36 months walked forward. Each month: rank, then check whether the top 20% beat the bottom 20%. Compared with plain momentum.
+5. **Live record:** once a month the ranking is frozen (`data/rank_log.csv`) and scored a month later.
+6. **Tentacles:** pinned stocks plus the brain's top-ranked stocks stream live with your Finnhub key.
 
 ## Settings (`config/tickers.json`)
 - `pinned`: stocks that are always tentacles
 - `tentacles`: how many stream live (free Finnhub plan: 50)
-- `extras`: stocks added to the universe beyond the S&P 500
+- `extras`: stocks added beyond the S&P 500
+
+## Secrets
+`FINNHUB_KEY` (Settings, Secrets and variables, Actions) lets the nightly run collect earnings data.

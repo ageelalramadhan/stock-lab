@@ -139,3 +139,12 @@ dt, .kv span:first-child { white-space: nowrap; }
 .table-wrap thead th { position: sticky; top: 0; background: var(--surface-1); z-index: 1; }
 #chart { height: 360px; }
 .pin { font-size: 10px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+.sw.brainc { border-color: #3987e5; }
+.sw.momc { border-color: var(--text-muted); }
+#track-chart { height: 300px; margin-bottom: 4px; }
+.track-intro { margin-bottom: 10px; }
+.track-intro .note { max-width: 70ch; }
+.rk { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.pctbar { display: inline-block; width: 46px; height: 6px; background: var(--grid); border-radius: 3px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
+.pctbar i { display: block; height: 100%; background: var(--accent); border-radius: 0 3px 3px 0; }
+.big-rank { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }

@@ -1,17 +1,24 @@
 """
-Stock Lab "cell": nightly learner over the whole market.
+Stock Lab "cell", version 2: a monthly RANKER.
 
-1. Universe: S&P 500 members (refreshed weekly from Wikipedia) plus extras from config
-2. Downloads daily history for every stock in batches
-3. Builds features from each stock's own movement AND market and sector context
-4. Trains ONE shared model on all stocks at once (the shared brain)
-5. Walk-forward backtest: per stock, was the brain right more often than simple guessing?
-6. Picks the tentacles: pinned stocks + the stocks with the best proven edge
-7. Logs every forecast and scores old ones once their day has passed
-8. Writes data/cell.js (map + list) and data/stocks/<SYM>.js (detail, loaded on click)
+Question it answers: over the next month (21 trading days), which stocks will do
+better or worse THAN THE OTHER STOCKS? Ranking against each other removes the
+market's daily noise, which is what drowned the old 5-day up/down model.
+
+1. Universe: S&P 500 (refreshed weekly) plus extras from config
+2. Features with a research track record: 12-1 and 6-1 month momentum, short-term
+   reversal, trend, volatility, beta, size, sector strength, earnings surprises
+3. One shared model, trained on weekly snapshots of every stock
+4. Honest test: walk forward month by month over the last 3 years. Each month,
+   rank all stocks, then check: did the top 20% beat the bottom 20%?
+   Compared against plain momentum, the classic simple strategy.
+5. Live record: once a month the ranking is frozen and scored a month later
+6. Tentacles: pinned stocks + the brain's top-ranked stocks (stream live)
+7. Writes data/cell.js (map, list, track record) and data/stocks/<SYM>.js (detail)
 
 Run:          python scripts/cell.py
 Offline test: DEMO=1 python scripts/cell.py
+Needs FINNHUB_KEY (GitHub secret) for earnings data; runs without it, minus earnings.
 """
 
 import io
@@ -20,44 +27,39 @@ import os
 import sys
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
-from sklearn.model_selection import TimeSeriesSplit
+from sklearn.ensemble import HistGradientBoostingRegressor
 
 ROOT = Path(__file__).resolve().parents[1]
 CFG = json.loads((ROOT / "config" / "tickers.json").read_text())
 UNIVERSE_FILE = ROOT / "config" / "universe.json"
 DATA = ROOT / "data"
 STOCK_DIR = DATA / "stocks"
-LOG_FILE = DATA / "predictions_log.csv"
-H = int(CFG.get("horizon_days", 5))
+RANK_LOG = DATA / "rank_log.csv"
+EARN_FILE = DATA / "earnings.csv"
+H = 21                       # one trading month
 YEARS = int(CFG.get("history_years", 6))
 N_TENTACLES = int(CFG.get("tentacles", 50))
 PINNED = CFG.get("pinned", [])
+BASKET = 20                  # stocks in the top and bottom basket
 DEMO = os.environ.get("DEMO") == "1"
 MARKET = "SPY"
+NOT_RANKED = {"SPY", "QQQ"}  # benchmarks are shown but not ranked
 
-FEATURES = [
-    "ret_1", "ret_5", "ret_10", "ret_20", "ret_60",
-    "dist_ma20", "dist_ma50", "dist_ma200", "rsi_14", "vol_20", "vol_ratio",
-    "range_pos_20", "volume_z",
-    "mkt_ret_5", "mkt_ret_20", "mkt_vol_20", "rel_mkt_20", "rel_sector_5", "rel_sector_20",
-]
+FEATURES = ["mom_12_1", "mom_6_1", "rev_1m", "ret_3m", "dist_ma200", "vol_3m", "beta_1y",
+            "max_day_1m", "size", "sector_3m", "earn_surprise", "earn_days"]
+RANKED = ["mom_12_1", "mom_6_1", "rev_1m", "ret_3m", "dist_ma200", "vol_3m", "beta_1y",
+          "max_day_1m", "size", "sector_3m"]   # turned into percentiles each day
 LABELS = {
-    "ret_1": "Yesterday's move", "ret_5": "Last week's move", "ret_10": "Last 2 weeks' move",
-    "ret_20": "Last month's move", "ret_60": "Last 3 months' move",
-    "dist_ma20": "Distance from 20-day average", "dist_ma50": "Distance from 50-day average",
-    "dist_ma200": "Distance from 200-day average", "rsi_14": "RSI (overbought / oversold)",
-    "vol_20": "Recent volatility", "vol_ratio": "Volatility vs. normal",
-    "range_pos_20": "Position in 20-day range", "volume_z": "Unusual trading volume",
-    "mkt_ret_5": "Market's last week", "mkt_ret_20": "Market's last month",
-    "mkt_vol_20": "Market nervousness", "rel_mkt_20": "Strength vs. market",
-    "rel_sector_5": "Strength vs. sector (week)", "rel_sector_20": "Strength vs. sector (month)",
+    "mom_12_1": "12-month momentum (skip last month)", "mom_6_1": "6-month momentum (skip last month)",
+    "rev_1m": "Last month's move", "ret_3m": "Last 3 months' move", "dist_ma200": "Distance above 200-day average",
+    "vol_3m": "Volatility", "beta_1y": "Sensitivity to the market (beta)", "max_day_1m": "Biggest single-day jump",
+    "size": "Trading size (dollar volume)", "sector_3m": "Its sector's strength",
+    "earn_surprise": "Last earnings surprise", "earn_days": "Days since earnings",
 }
 
 
@@ -107,6 +109,7 @@ def download_all(symbols):
     frames = {}
     batches = [symbols[i:i + 80] for i in range(0, len(symbols), 80)]
     for b_i, batch in enumerate(batches):
+        df = None
         for attempt in range(3):
             try:
                 df = yf.download(batch, period=f"{YEARS}y", interval="1d", auto_adjust=True,
@@ -115,7 +118,7 @@ def download_all(symbols):
             except Exception as e:
                 print(f"  batch {b_i + 1}: attempt {attempt + 1} failed ({e})")
                 time.sleep(20 * (attempt + 1))
-        else:
+        if df is None:
             continue
         for s in batch:
             try:
@@ -141,14 +144,15 @@ def demo_universe():
 
 
 def demo_prices(symbols):
+    """Random walks with a small planted momentum effect, so the test can find something."""
     rng = np.random.default_rng(7)
     idx = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=252 * YEARS)
     mkt = rng.normal(0.0004, 0.010, len(idx))
-    sect = {k: rng.normal(0, 0.008, len(idx)) for k in range(8)}
+    sect = {k: rng.normal(0, 0.007, len(idx)) for k in range(8)}
     frames = {}
     for i, s in enumerate(symbols):
-        beta = rng.uniform(0.6, 1.5)
-        r = beta * mkt + sect[i % 8] + rng.normal(0, 0.014, len(idx))
+        drift = np.cumsum(rng.normal(0, 0.00004, len(idx)))  # slow-moving trend = momentum
+        r = rng.uniform(0.6, 1.5) * mkt + sect[i % 8] + drift + rng.normal(0, 0.015, len(idx))
         if s in ("SPY", "QQQ"):
             r = mkt + rng.normal(0, 0.002, len(idx))
         c = rng.uniform(20, 400) * np.exp(np.cumsum(r))
@@ -158,132 +162,211 @@ def demo_prices(symbols):
     return frames
 
 
+# ---------------- earnings (Finnhub, accumulates over time) ----------------
+
+def update_earnings():
+    key = os.environ.get("FINNHUB_KEY", "")
+    old = pd.read_csv(EARN_FILE) if EARN_FILE.exists() else pd.DataFrame(
+        columns=["symbol", "date", "hour", "eps_actual", "eps_estimate", "surprise"])
+    if DEMO or not key:
+        print("Earnings: no FINNHUB_KEY, skipping update")
+        return old
+    today = datetime.now(timezone.utc).date()
+    url = (f"https://finnhub.io/api/v1/calendar/earnings?from={today - timedelta(days=35)}"
+           f"&to={today + timedelta(days=45)}&token={key}")
+    try:
+        rows = json.loads(urllib.request.urlopen(url, timeout=30).read()).get("earningsCalendar", [])
+    except Exception as e:
+        print(f"Earnings update failed ({e})")
+        return old
+    new = pd.DataFrame([{
+        "symbol": str(r.get("symbol", "")).replace(".", "-"), "date": r.get("date"), "hour": r.get("hour", ""),
+        "eps_actual": r.get("epsActual"), "eps_estimate": r.get("epsEstimate")} for r in rows])
+    if new.empty:
+        return old
+    est = pd.to_numeric(new["eps_estimate"], errors="coerce")
+    act = pd.to_numeric(new["eps_actual"], errors="coerce")
+    new["surprise"] = ((act - est) / est.abs().clip(lower=0.05)).clip(-1, 1)
+    both = pd.concat([old, new]).drop_duplicates(["symbol", "date"], keep="last").sort_values(["symbol", "date"])
+    both.to_csv(EARN_FILE, index=False)
+    print(f"Earnings: {len(new)} calendar rows fetched, {len(both)} stored")
+    return both
+
+
 # ---------------- features ----------------
 
-def own_features(df):
+def stock_features(df, mkt_ret):
     c = df["Close"]
+    r = c.pct_change()
     f = pd.DataFrame(index=df.index)
-    for n in (1, 5, 10, 20, 60):
-        f[f"ret_{n}"] = c.pct_change(n)
-    for n in (20, 50, 200):
-        f[f"dist_ma{n}"] = c / c.rolling(n).mean() - 1
-    d = c.diff()
-    gain = d.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
-    loss = (-d.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
-    f["rsi_14"] = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
-    daily = c.pct_change()
-    f["vol_20"] = daily.rolling(20).std() * np.sqrt(252)
-    f["vol_ratio"] = daily.rolling(20).std() / daily.rolling(120).std()
-    lo, hi = df["Low"].rolling(20).min(), df["High"].rolling(20).max()
-    f["range_pos_20"] = (c - lo) / (hi - lo)
-    v = np.log1p(df["Volume"])
-    f["volume_z"] = (v - v.rolling(60).mean()) / v.rolling(60).std()
-    f["target"] = c.shift(-H) / c - 1
+    f["mom_12_1"] = c.shift(21) / c.shift(252) - 1
+    f["mom_6_1"] = c.shift(21) / c.shift(126) - 1
+    f["rev_1m"] = c / c.shift(21) - 1
+    f["ret_3m"] = c / c.shift(63) - 1
+    f["dist_ma200"] = c / c.rolling(200).mean() - 1
+    f["vol_3m"] = r.rolling(63).std() * np.sqrt(252)
+    m = mkt_ret.reindex(df.index)
+    f["beta_1y"] = r.rolling(252).cov(m) / m.rolling(252).var()
+    f["max_day_1m"] = r.rolling(21).max()
+    f["size"] = np.log((c * df["Volume"]).rolling(63).mean())
+    f["fwd"] = c.shift(-H) / c - 1           # what happens next month
+    f["close"] = c
     return f
 
 
-def build_panel(frames, sector_of):
-    mkt = frames[MARKET]["Close"]
-    m = pd.DataFrame({"mkt_ret_5": mkt.pct_change(5), "mkt_ret_20": mkt.pct_change(20),
-                      "mkt_vol_20": mkt.pct_change().rolling(20).std() * np.sqrt(252)})
+def build_panel(frames, sector_of, earnings):
+    mkt_ret = frames[MARKET]["Close"].pct_change()
     parts = []
     for s, df in frames.items():
-        f = own_features(df).join(m, how="left")
-        f["rel_mkt_20"] = f["ret_20"] - f["mkt_ret_20"]
-        f["symbol"] = s
-        f["sector"] = sector_of.get(s, "Other")
+        f = stock_features(df, mkt_ret)
+        f["symbol"], f["sector"] = s, sector_of.get(s, "Other")
         parts.append(f)
-    panel = pd.concat(parts)
-    panel.index.name = "date"
-    panel = panel.reset_index()
-    for n in (5, 20):
-        sec_mean = panel.groupby(["date", "sector"])[f"ret_{n}"].transform("mean")
-        panel[f"rel_sector_{n}"] = panel[f"ret_{n}"] - sec_mean
-    return panel.sort_values(["date", "symbol"]).reset_index(drop=True)
+    p = pd.concat(parts)
+    p.index.name = "date"
+    p = p.reset_index()
+    p["sector_3m"] = p.groupby(["date", "sector"])["ret_3m"].transform("mean")
+
+    # earnings surprise known as of each date (only what was public by then)
+    p["earn_surprise"], p["earn_days"] = np.nan, np.nan
+    if earnings is not None and len(earnings):
+        e = earnings.dropna(subset=["surprise"]).copy()
+        e["edate"] = pd.to_datetime(e["date"])
+        e = e[e["symbol"].isin(frames.keys())].sort_values("edate")
+        if len(e):
+            p = p.sort_values("date")
+            p = pd.merge_asof(p.drop(columns=["earn_surprise", "earn_days"]), e[["symbol", "edate", "surprise"]],
+                              left_on="date", right_on="edate", by="symbol", direction="backward",
+                              tolerance=pd.Timedelta(days=90))
+            p["earn_surprise"] = p["surprise"]
+            p["earn_days"] = (p["date"] - p["edate"]).dt.days
+            p = p.drop(columns=["surprise", "edate"])
+
+    ranked = p[~p["symbol"].isin(NOT_RANKED)].copy()
+    for col in RANKED:  # percentile vs. all other stocks that same day (0 = lowest, 1 = highest)
+        ranked[col] = ranked.groupby("date")[col].rank(pct=True)
+    ranked["target"] = ranked["fwd"] - ranked.groupby("date")["fwd"].transform("median")
+    ranked["target"] = ranked["target"].clip(-0.5, 0.5)
+    return ranked.sort_values(["date", "symbol"]).reset_index(drop=True), p
 
 
-def reg(q):
-    return HistGradientBoostingRegressor(loss="quantile", quantile=q, max_iter=250, learning_rate=0.05,
-                                         max_depth=4, min_samples_leaf=200, l2_regularization=1.0)
+def usable(train):
+    """Inputs with enough history to learn from (earnings data starts thin and grows nightly)."""
+    return [f for f in FEATURES if train[f].notna().sum() >= 2000]
 
 
-def clf():
-    return HistGradientBoostingClassifier(max_iter=200, learning_rate=0.05, max_depth=4,
-                                          min_samples_leaf=200, l2_regularization=1.0)
+def model():
+    return HistGradientBoostingRegressor(max_iter=200, learning_rate=0.04, max_depth=3,
+                                         min_samples_leaf=300, l2_regularization=2.0)
 
 
-# ---------------- learning ----------------
+# ---------------- honest test ----------------
 
-def walk_forward(panel, test_days=250, refit_every=21):
-    """Train only on the past, predict the next block of days, step forward. No peeking."""
-    dates = np.sort(panel["date"].unique())
-    labeled = panel.dropna(subset=FEATURES + ["target"])
-    start = len(dates) - H - test_days
-    out = []
-    for i in range(start, len(dates) - H, refit_every):
-        cutoff, block = dates[i - H], dates[i:i + refit_every]
-        train = labeled[labeled["date"] <= cutoff]
-        test = labeled[labeled["date"].isin(block)]
-        if test.empty:
+def walk_forward(panel, dates, months=36):
+    """Each month: train only on what was known, rank everyone, see what happened a month later."""
+    weekly = set(dates[::-5])
+    train_pool = panel[panel["date"].isin(weekly)].dropna(subset=["target"])
+    test_idx = list(range(len(dates) - 1 - H, H * 13, -H))[:months][::-1]
+    rows, series = [], []
+    cum_b, cum_m = 0.0, 0.0
+    for i in test_idx:
+        d, cutoff = dates[i], dates[i - H]
+        train = train_pool[train_pool["date"] <= cutoff]
+        test = panel[(panel["date"] == d)].dropna(subset=["target", "mom_12_1"])
+        if len(train) < 5000 or len(test) < 50:
             continue
-        m = reg(0.5).fit(train[FEATURES], train["target"])
-        out.append(pd.DataFrame({"symbol": test["symbol"].values, "pred": m.predict(test[FEATURES]),
-                                 "actual": test["target"].values}))
-        print(f"  backtest block {len(out)} done")
-    bt = pd.concat(out)
-    stats = {}
-    for s, g in bt.groupby("symbol"):
-        up = (g["actual"] > 0).mean()
-        hit = (np.sign(g["pred"]) == np.sign(g["actual"])).mean()
-        base = max(up, 1 - up)
-        # overlapping 5-day windows are not independent: about len/H real samples
-        n_eff = max(len(g) / H, 1)
-        se = np.sqrt(max(base * (1 - base), 0.01) / n_eff)
-        stats[s] = {"days_tested": int(len(g)), "direction_hit_rate": float(hit),
-                    "baseline_best_guess": float(base), "edge": float(hit - base),
-                    "z": float((hit - base) / se)}
-    overall = {"direction_hit_rate": float((np.sign(bt["pred"]) == np.sign(bt["actual"])).mean()),
-               "baseline_best_guess": float(max((bt["actual"] > 0).mean(), (bt["actual"] <= 0).mean()))}
-    return stats, overall
+        cols = usable(train)
+        pred = model().fit(train[cols], train["target"]).predict(test[cols])
+        t = test.assign(pred=pred)
+        q = max(len(t) // 5, 1)
+        ic = t["pred"].rank().corr(t["target"].rank())
+        top = t.nlargest(q, "pred")["target"].mean()
+        bot = t.nsmallest(q, "pred")["target"].mean()
+        m_ic = t["mom_12_1"].rank().corr(t["target"].rank())
+        m_top = t.nlargest(q, "mom_12_1")["target"].mean()
+        m_bot = t.nsmallest(q, "mom_12_1")["target"].mean()
+        cum_b += top - bot
+        cum_m += m_top - m_bot
+        rows.append({"date": d, "ic": ic, "spread": top - bot, "m_ic": m_ic, "m_spread": m_top - m_bot})
+        series.append({"time": pd.Timestamp(d).strftime("%Y-%m-%d"), "brain": round(cum_b, 4), "momentum": round(cum_m, 4)})
+        print(f"  tested {pd.Timestamp(d).date()}: rank accuracy {ic:+.3f}, top minus bottom {top - bot:+.2%}")
+    r = pd.DataFrame(rows)
+
+    def summary(ic, spread):
+        n = len(spread)
+        return {"months": int(n), "ic": float(ic.mean()), "ic_positive": float((ic > 0).mean()),
+                "spread": float(spread.mean()), "spread_wins": int((spread > 0).sum()),
+                "t": float(spread.mean() / (spread.std(ddof=1) / np.sqrt(n))) if n > 2 and spread.std() > 0 else 0.0}
+    return {"brain": summary(r["ic"], r["spread"]), "momentum": summary(r["m_ic"], r["m_spread"]), "series": series}
 
 
-def load_log():
-    if LOG_FILE.exists():
-        return pd.read_csv(LOG_FILE)
-    return pd.DataFrame(columns=["run_date", "symbol", "base_date", "base_close", "pred_low", "pred_mid",
-                                 "pred_high", "prob_up", "actual_close", "actual_return", "direction_hit", "in_band"])
+# ---------------- live record ----------------
 
+def update_rank_log(panel_latest, frames, dates, run_date):
+    log = pd.read_csv(RANK_LOG) if RANK_LOG.exists() else pd.DataFrame(
+        columns=["formed", "symbol", "rank", "pct", "score", "base_close", "end_close", "ret", "excess"])
+    spy = frames[MARKET]["Close"]
+    pos = {d.strftime("%Y-%m-%d"): i for i, d in enumerate(spy.index)}
 
-def score_log(log, frames):
-    log = log.copy()
-    pending = log["actual_close"].isna()
-    for s, idxs in log[pending].groupby("symbol").groups.items():
-        df = frames.get(s)
-        if df is None:
+    # score finished months
+    pending = log["end_close"].isna()
+    for formed in log.loc[pending, "formed"].unique():
+        b = pos.get(formed)
+        if b is None or b + H >= len(spy):
             continue
-        pos = {d: i for i, d in enumerate(df.index.strftime("%Y-%m-%d"))}
-        for i in idxs:
-            b = pos.get(log.at[i, "base_date"])
-            if b is None or b + H >= len(df):
+        end_date = spy.index[b + H]
+        idx = log.index[(log["formed"] == formed)]
+        for i in idx:
+            df = frames.get(log.at[i, "symbol"])
+            if df is None or end_date not in df.index:
                 continue
-            actual = float(df["Close"].iloc[b + H])
-            r = actual / log.at[i, "base_close"] - 1
-            log.at[i, "actual_close"] = actual
-            log.at[i, "actual_return"] = r
-            log.at[i, "direction_hit"] = int(np.sign(r) == np.sign(log.at[i, "pred_mid"]))
-            log.at[i, "in_band"] = int(log.at[i, "pred_low"] <= r <= log.at[i, "pred_high"])
-    return log
+            log.at[i, "end_close"] = float(df.at[end_date, "Close"])
+            log.at[i, "ret"] = log.at[i, "end_close"] / log.at[i, "base_close"] - 1
+        sub = log.loc[idx, "ret"].astype(float)
+        log.loc[idx, "excess"] = sub - sub.median()
 
+    # freeze a new ranking once a month
+    last = log["formed"].max() if len(log) else None
+    today = dates[-1].strftime("%Y-%m-%d")
+    due = last is None or (pos.get(last) is not None and len(spy) - 1 - pos[last] >= H)
+    if due and today not in set(log["formed"]):
+        new = panel_latest[["symbol", "rank", "pct", "score", "close"]].rename(columns={"close": "base_close"})
+        new.insert(0, "formed", today)
+        log = pd.concat([log, new], ignore_index=True)
+        print(f"Froze a new monthly ranking on {today}")
+    log.to_csv(RANK_LOG, index=False)
+
+    baskets = []
+    for formed, g in log.groupby("formed"):
+        g = g.sort_values("rank")
+        top, bot = g.head(BASKET), g.tail(BASKET)
+        done = g["end_close"].notna().all() and len(g)
+        b = pos.get(formed)
+        spy_ret = None
+        if done and b is not None and b + H < len(spy):
+            spy_ret = float(spy.iloc[b + H] / spy.iloc[b] - 1)
+        baskets.append({"formed": formed, "scored": bool(done),
+                        "top": [s for s in top["symbol"]], "bottom": [s for s in bot["symbol"]],
+                        "top_ret": r(top["ret"].astype(float).mean()) if done else None,
+                        "bottom_ret": r(bot["ret"].astype(float).mean()) if done else None,
+                        "all_ret": r(g["ret"].astype(float).median()) if done else None,
+                        "spy_ret": r(spy_ret)})
+    return log, baskets
+
+
+# ---------------- helpers ----------------
 
 def r(x, n=4):
     if x is None:
         return None
-    x = float(x)
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return None
     return None if np.isnan(x) or np.isinf(x) else round(x, n)
 
 
-def write_js(path, var, obj):
-    path.write_text(f"{var}" + json.dumps(obj, allow_nan=False, separators=(",", ":")) + ";\n")
+def write_js(path, prefix, obj):
+    path.write_text(prefix + json.dumps(obj, allow_nan=False, separators=(",", ":")) + ";\n")
 
 
 # ---------------- main ----------------
@@ -296,66 +379,52 @@ def main():
 
     universe = load_universe()
     meta = {m["symbol"]: m for m in universe}
-    print(f"Universe: {len(universe)} stocks")
     frames = download_all([m["symbol"] for m in universe])
     if MARKET not in frames:
         sys.exit("Market benchmark SPY missing, stopping")
-    print(f"Prices loaded for {len(frames)} stocks")
+    print(f"Prices loaded for {len(frames)} of {len(universe)} stocks")
+    earnings = update_earnings()
 
-    panel = build_panel(frames, {s: meta[s]["sector"] for s in frames})
-    labeled = panel.dropna(subset=FEATURES + ["target"])
-    print(f"Shared brain training on {len(labeled):,} examples")
+    panel, full = build_panel(frames, {s: meta[s]["sector"] for s in frames}, earnings)
+    dates = np.sort(panel["date"].unique())
+    dates = pd.DatetimeIndex(dates)
 
-    stats, overall = walk_forward(panel)
-    X, y = labeled[FEATURES], labeled["target"]
-    q = {k: reg(v).fit(X, y) for k, v in (("low", 0.1), ("mid", 0.5), ("high", 0.9))}
-    cl = CalibratedClassifierCV(clf(), method="sigmoid", cv=TimeSeriesSplit(4)).fit(X, (y > 0).astype(int))
+    test = walk_forward(panel, dates)
+    print("Backtest brain:", test["brain"])
+    print("Backtest momentum:", test["momentum"])
 
-    last_date = panel["date"].max()
-    latest = panel.groupby("symbol").tail(1).dropna(subset=FEATURES)
-    latest = latest[latest["date"] >= last_date - pd.Timedelta(days=7)]
-    preds = pd.DataFrame({"symbol": latest["symbol"].values, "base_date": latest["date"].values,
-                          "low": q["low"].predict(latest[FEATURES]), "mid": q["mid"].predict(latest[FEATURES]),
-                          "high": q["high"].predict(latest[FEATURES]),
-                          "prob_up": cl.predict_proba(latest[FEATURES])[:, 1]}).set_index("symbol")
-    preds["low"] = preds[["low", "mid"]].min(axis=1)
-    preds["high"] = preds[["high", "mid"]].max(axis=1)
+    weekly = set(dates[::-5])
+    train = panel[panel["date"].isin(weekly)].dropna(subset=["target"])
+    cols = usable(train)
+    brain = model().fit(train[cols], train["target"])
+    print(f"Final brain trained on {len(train):,} snapshots using {len(cols)} inputs: {cols}")
 
-    # log today's forecasts, score old ones
-    log = score_log(load_log(), frames)
-    new_rows = []
-    for s, p in preds.iterrows():
-        bd = pd.Timestamp(p["base_date"]).strftime("%Y-%m-%d")
-        if ((log["symbol"] == s) & (log["base_date"] == bd)).any():
-            continue
-        new_rows.append({"run_date": run_date, "symbol": s, "base_date": bd,
-                         "base_close": float(frames[s]["Close"].iloc[-1]), "pred_low": p["low"],
-                         "pred_mid": p["mid"], "pred_high": p["high"], "prob_up": p["prob_up"]})
-    if new_rows:
-        log = pd.concat([log, pd.DataFrame(new_rows)], ignore_index=True)
-    log.to_csv(LOG_FILE, index=False)
+    # global importance: how much shuffling each input hurts the ranking (recent year)
+    recent = train[train["date"] >= dates[-260]]
+    base = brain.predict(recent[cols])
+    rng = np.random.default_rng(0)
+    imp = {}
+    for col in cols:
+        sh = recent[cols].copy()
+        sh[col] = rng.permutation(sh[col].values)
+        imp[col] = float(np.abs(brain.predict(sh) - base).mean())
+    tot = sum(imp.values()) or 1
+    importance = sorted(({"key": k, "label": LABELS[k], "share": round(v / tot, 3)} for k, v in imp.items()),
+                        key=lambda x: -x["share"])
 
-    live = {}
-    for s, g in log[log["actual_close"].notna()].groupby("symbol"):
-        live[s] = {"scored": int(len(g)), "direction_hit_rate": float(g["direction_hit"].astype(float).mean()),
-                   "in_band_rate": float(g["in_band"].astype(float).mean())}
+    latest = panel[panel["date"] == dates[-1]].dropna(subset=["mom_12_1"]).copy()
+    latest["score"] = brain.predict(latest[cols])
+    latest["rank"] = latest["score"].rank(ascending=False, method="first").astype(int)
+    latest["pct"] = 1 - (latest["rank"] - 1) / max(len(latest) - 1, 1)
+    latest = latest.set_index("symbol")
 
-    # choose tentacles: pinned first, then best proven edge (live record counts more once it exists)
-    def score(s):
-        # confidence-weighted edge: backtest z-score, blended with the live record as it grows
-        z = stats.get(s, {}).get("z", -9)
-        lv = live.get(s)
-        if lv and lv["scored"] >= 20:
-            n = lv["scored"] / H
-            lz = (lv["direction_hit_rate"] - 0.5) / np.sqrt(0.25 / max(n, 1))
-            w = min(lv["scored"] / 100, 0.7)
-            z = (1 - w) * z + w * lz
-        return z
-    ranked = sorted([s for s in preds.index if s not in PINNED], key=score, reverse=True)
-    tentacles = [s for s in PINNED if s in preds.index] + ranked[: max(0, N_TENTACLES - len(PINNED))]
-    tent_set = set(tentacles)
+    log, baskets = update_rank_log(latest.reset_index(), frames, dates, run_date)
+    ranked_order = latest.sort_values("rank").index.tolist()
+    tentacles = [s for s in PINNED if s in frames] + [s for s in ranked_order if s not in PINNED]
+    tentacles = tentacles[:N_TENTACLES]
+    tent = set(tentacles)
 
-    # links: who moves with whom (last 60 trading days)
+    # threads: stocks that moved together over the last 60 days
     rets = pd.DataFrame({s: df["Close"].pct_change() for s, df in frames.items()}).iloc[-60:]
     corr = rets.corr().fillna(0).values
     syms = list(rets.columns)
@@ -371,81 +440,87 @@ def main():
                 seen.add(key)
                 links.append([key[0], key[1], round(float(row[j]), 2)])
 
-    # per-stock detail files + cell summary
+    earn = earnings if earnings is not None else pd.DataFrame()
+    today = dates[-1]
+    mom_now = full.sort_values("date").groupby("symbol")["mom_12_1"].last()
     cells = []
-    rng = np.random.default_rng(0)
-    for s in preds.index:
-        df, p, m = frames[s], preds.loc[s], meta[s]
-        c = df["Close"]
-        base_date = pd.Timestamp(p["base_date"])
-        base_close = float(c.iloc[-1])
-        dollar_vol = float((c * df["Volume"]).iloc[-60:].mean())
-        sym_rows = latest[latest["symbol"] == s]
-        sym_hist = labeled[labeled["symbol"] == s].iloc[-120:]
-
-        drivers = []
-        if len(sym_hist) > 20:
-            base = q["mid"].predict(sym_hist[FEATURES])
-            imp = {}
-            for col in FEATURES:
-                sh = sym_hist[FEATURES].copy()
-                sh[col] = rng.permutation(sh[col].values)
-                imp[col] = float(np.abs(q["mid"].predict(sh) - base).mean())
-            tot = sum(imp.values()) or 1
-            drivers = [{"feature": LABELS[k], "share": r(v / tot, 3)}
-                       for k, v in sorted(imp.items(), key=lambda kv: -kv[1])[:4]]
-
-        future = pd.bdate_range(base_date, periods=H + 1)[1:]
-        path = [{"time": base_date.strftime("%Y-%m-%d"), "low": base_close, "mid": base_close, "high": base_close}]
-        for k, d in enumerate(future, 1):
-            sq = np.sqrt(k / H)
-            path.append({"time": d.strftime("%Y-%m-%d"), "low": r(base_close * (1 + p["low"] * sq)),
-                         "mid": r(base_close * (1 + p["mid"] * k / H)), "high": r(base_close * (1 + p["high"] * sq))})
+    for s, df in frames.items():
+        m, c = meta[s], df["Close"]
+        L = latest.loc[s] if s in latest.index else None
+        last_close = float(c.iloc[-1])
+        vol = float(c.pct_change().iloc[-63:].std() * np.sqrt(252))
+        es = earn[earn["symbol"] == s] if len(earn) else earn
+        past = es[(pd.to_datetime(es["date"]) <= today) & es["surprise"].notna()] if len(es) else es
+        nxt = es[pd.to_datetime(es["date"]) > today] if len(es) else es
+        last_e = past.iloc[-1] if len(past) else None
+        next_e = nxt.iloc[0]["date"] if len(nxt) else None
 
         def chg(n):
             return r(c.iloc[-1] / c.iloc[-1 - n] - 1) if len(c) > n else None
-        ytd = c[c.index.year == base_date.year]
-        f_last = sym_rows.iloc[0]
-        bt = stats.get(s, {})
+        ytd = c[c.index.year == today.year]
+        score = float(L["score"]) if L is not None else None
+
+        # band: brain's expected edge vs. the market, plus the stock's own typical swing
+        base_date = c.index[-1]
+        future = pd.bdate_range(base_date, periods=H + 1)[1:]
+        path = [{"time": base_date.strftime("%Y-%m-%d"), "low": last_close, "mid": last_close, "high": last_close}]
+        for k, d in enumerate(future, 1):
+            sw = 1.28 * vol * np.sqrt(k / 252)
+            mid = (score or 0) * k / H
+            path.append({"time": d.strftime("%Y-%m-%d"), "mid": r(last_close * (1 + mid), 2),
+                         "low": r(last_close * (1 + mid - sw), 2), "high": r(last_close * (1 + mid + sw), 2)})
+
+        why = []
+        if L is not None:
+            for it in importance[:6]:
+                v = L[it["key"]]
+                if it["key"] in RANKED:
+                    why.append({"label": it["label"], "pct": r(v, 3), "kind": "pct"})
+                elif it["key"] == "earn_surprise":
+                    why.append({"label": it["label"], "value": r(v, 3), "kind": "surprise"})
+                else:
+                    why.append({"label": it["label"], "value": r(v, 0), "kind": "days"})
+
+        diary = log[log["symbol"] == s].tail(24).replace({np.nan: None}).to_dict("records")
         hist = df.iloc[-300:]
         detail = {
             "symbol": s, "name": m["name"], "sector": m["sector"], "updated": run_date, "horizon_days": H,
-            "tentacle": s in tent_set, "pinned": s in PINNED,
+            "tentacle": s in tent, "pinned": s in PINNED, "ranked": L is not None,
             "candles": [[d.strftime("%Y-%m-%d"), r(o, 2), r(h, 2), r(l, 2), r(cl, 2)]
                         for d, o, h, l, cl in zip(hist.index, hist["Open"], hist["High"], hist["Low"], hist["Close"])],
-            "performance": {"last_close": r(base_close, 2), "change_1d": chg(1), "change_1w": chg(5),
-                            "change_1m": chg(21), "change_3m": chg(63), "change_1y": chg(252),
+            "performance": {"last_close": r(last_close, 2), "change_1w": chg(5), "change_1m": chg(21),
+                            "change_3m": chg(63), "change_1y": chg(252),
                             "change_ytd": r(c.iloc[-1] / ytd.iloc[0] - 1) if len(ytd) else None,
                             "high_52w": r(c.iloc[-252:].max(), 2), "low_52w": r(c.iloc[-252:].min(), 2),
-                            "volatility_annual": r(f_last["vol_20"]), "rsi_14": r(f_last["rsi_14"], 1)},
-            "forecast": {"base_date": base_date.strftime("%Y-%m-%d"), "base_close": base_close,
-                         "expected_return": r(p["mid"]), "low_return": r(p["low"]), "high_return": r(p["high"]),
-                         "prob_up": r(p["prob_up"], 3), "path": path, "drivers": drivers},
-            "backtest": {k: (r(v) if isinstance(v, float) else v) for k, v in bt.items()},
-            "live": {k: (r(v) if isinstance(v, float) else v) for k, v in live.get(s, {"scored": 0}).items()},
-            "history": log[log["symbol"] == s].tail(30).replace({np.nan: None}).to_dict("records"),
+                            "volatility_annual": r(vol)},
+            "call": {"rank": int(L["rank"]) if L is not None else None, "of": int(len(latest)),
+                     "pct": r(L["pct"], 3) if L is not None else None, "score": r(score),
+                     "base_date": base_date.strftime("%Y-%m-%d"), "path": path, "why": why},
+            "earnings": {"last_date": last_e["date"] if last_e is not None else None,
+                         "last_surprise": r(last_e["surprise"]) if last_e is not None else None,
+                         "next_date": next_e},
+            "diary": diary,
         }
         write_js(STOCK_DIR / f"{s}.js", f"window.STOCK_DETAIL=window.STOCK_DETAIL||{{}};window.STOCK_DETAIL[{json.dumps(s)}]=", detail)
-        cells.append({"s": s, "n": m["name"], "sec": m["sector"], "px": r(base_close, 2),
-                      "d1": chg(1), "m1": chg(21), "exp": r(p["mid"]), "pu": r(p["prob_up"], 3),
-                      "edge": r(bt.get("edge")), "z": r(bt.get("z"), 2), "hit": r(bt.get("direction_hit_rate")),
-                      "base": r(bt.get("baseline_best_guess")), "dv": round(dollar_vol / 1e6, 1),
-                      "t": 1 if s in tent_set else 0, "pin": 1 if s in PINNED else 0,
-                      "lv": r(live[s]["direction_hit_rate"]) if s in live else None,
-                      "lvn": live[s]["scored"] if s in live else 0})
+        cells.append({"s": s, "n": m["name"], "sec": m["sector"], "px": r(last_close, 2), "d1": chg(1),
+                      "m1": chg(21), "dv": round(float((c * df["Volume"]).iloc[-60:].mean()) / 1e6, 1),
+                      "rk": int(L["rank"]) if L is not None else None, "pct": r(L["pct"], 3) if L is not None else None,
+                      "sc": r(score), "mom": r(mom_now.get(s)),
+                      "en": next_e, "es": r(last_e["surprise"]) if last_e is not None else None,
+                      "t": 1 if s in tent else 0, "pin": 1 if s in PINNED else 0})
 
-    # remove detail files for stocks that left the universe
-    keep = {f"{s}.js" for s in preds.index}
+    keep = {f"{s}.js" for s in frames}
     for f in STOCK_DIR.glob("*.js"):
         if f.name not in keep:
             f.unlink()
 
-    out = {"generated": run_date, "horizon_days": H, "data_through": last_date.strftime("%Y-%m-%d"),
-           "universe_size": len(cells), "tentacles": tentacles, "examples": int(len(labeled)),
-           "overall": {k: r(v) for k, v in overall.items()}, "cells": cells, "links": links,
+    out = {"generated": run_date, "horizon_days": H, "data_through": today.strftime("%Y-%m-%d"),
+           "universe_size": len(cells), "ranked": int(len(latest)), "tentacles": tentacles,
+           "snapshots": int(len(train)), "inputs": [LABELS[c] for c in cols], "test": test, "importance": importance, "baskets": baskets,
+           "basket_size": BASKET, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
            "runtime_min": round((time.time() - t0) / 60, 1)}
     write_js(DATA / "cell.js", "window.CELL=", out)
-    print(f"Done in {out['runtime_min']} min: {len(cells)} cells, {len(tentacles)} tentacles, {len(links)} links")
+    print(f"Done in {out['runtime_min']} min: {len(cells)} stocks, {len(latest)} ranked, {len(tentacles)} tentacles")
 
 
 if __name__ == "__main__":

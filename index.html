@@ -25,7 +25,8 @@
     <div class="panel-head">
       <div class="seg" id="view-seg">
         <button data-view="map" class="on">Cell map</button>
-        <button data-view="list">List</button>
+        <button data-view="list">Rankings</button>
+        <button data-view="track">Track record</button>
       </div>
       <div class="tools">
         <input id="search" type="search" placeholder="Find a stock, e.g. MSFT" autocomplete="off" list="sym-list">
@@ -37,14 +38,14 @@
       <div class="map-tools">
         <span class="muted small">Color shows</span>
         <div class="seg" id="color-seg">
-          <button data-color="d1" class="on">Today's move</button>
-          <button data-color="exp">Model lean (next <span class="h-days"></span> days)</button>
+          <button data-color="rank" class="on">Brain's ranking</button>
+          <button data-color="d1">Today's move</button>
         </div>
       </div>
       <div id="map-wrap"><canvas id="map"></canvas></div>
       <div class="map-legend">
-        <span class="scale"><span id="scale-lo">-4%</span><i class="ramp"></i><span id="scale-hi">+4%</span></span>
-        <span><i class="ring"></i>Tentacle (streams live, picked for proven edge)</span>
+        <span class="scale"><span id="scale-lo">Bottom</span><i class="ramp"></i><span id="scale-hi">Top</span></span>
+        <span><i class="ring"></i>Tentacle (brain's top picks + pinned, streams live)</span>
         <span><i class="curve"></i>Thread to the shared brain</span>
         <span><i class="link"></i>Moves together (last 60 days)</span>
         <span class="muted">Dot size = trading volume</span>
@@ -54,12 +55,12 @@
     <div id="list-view" hidden>
       <div class="map-tools">
         <div class="seg" id="scope-seg">
-          <button data-scope="t" class="on">Tentacles</button>
-          <button data-scope="all">All stocks</button>
+          <button data-scope="all" class="on">All stocks</button>
+          <button data-scope="t">Tentacles</button>
         </div>
         <div class="seg" id="sort-seg">
-          <button data-sort="edge" class="on">Proven edge</button>
-          <button data-sort="lean">Model lean</button>
+          <button data-sort="rank" class="on">Brain rank</button>
+          <button data-sort="mom">Momentum</button>
           <button data-sort="today">Today</button>
           <button data-sort="symbol">A to Z</button>
         </div>
@@ -67,12 +68,35 @@
       <div class="table-wrap">
         <table class="tbl" id="watch-table">
           <thead><tr>
-            <th>Stock</th><th class="r">Price</th><th class="r">Today</th>
-            <th class="r">Next <span class="h-days"></span>d</th>
-            <th class="r">Chance up</th><th>Reliability</th>
+            <th class="r">Rank</th><th>Stock</th><th class="r">Price</th><th class="r">Today</th>
+            <th class="r" title="Brain's expected next-month return compared with the typical stock">vs. market</th>
+            <th class="r" title="Return from 12 months ago to 1 month ago">Momentum</th>
+            <th>Earnings</th>
           </tr></thead>
           <tbody></tbody>
         </table>
+      </div>
+    </div>
+
+    <div id="track-view" hidden>
+      <div class="track-intro">
+        <h2>Does the ranking work?</h2>
+        <p class="note">Every month the brain ranks all stocks. The test: did its <b>top 20%</b> beat its <b>bottom 20%</b> over the next month?
+          The line adds up that gap month after month. A line rising steadily means the ranking works. Flat or falling means it doesn't.
+          The momentum line is the classic simple rule (buy last year's winners) for comparison.</p>
+      </div>
+      <div class="legend">
+        <span><i class="sw ln brainc"></i>Brain: top 20% minus bottom 20%, added up</span>
+        <span><i class="sw ln momc"></i>Momentum only, same test</span>
+      </div>
+      <div id="track-chart"></div>
+      <div class="cards" id="track-cards"></div>
+      <div class="card wide">
+        <h3>Live record <span class="muted small">(rankings frozen each month, scored one month later)</span></h3>
+        <table class="tbl small" id="baskets"><thead><tr>
+          <th>Frozen on</th><th class="r">Top <span class="bsize"></span></th><th class="r">Bottom <span class="bsize"></span></th>
+          <th class="r">Gap</th><th class="r">S&amp;P 500 (SPY)</th><th>Result</th></tr></thead><tbody></tbody></table>
+        <p class="note" id="basket-picks"></p>
       </div>
     </div>
   </section>
@@ -95,23 +119,23 @@
       <span><i class="sw candle"></i>Price (hollow = up day)</span>
       <span><i class="sw ln ma20"></i>20-day avg</span>
       <span><i class="sw ln ma50"></i>50-day avg</span>
-      <span><i class="sw ln fc dashed"></i>Forecast</span>
-      <span><i class="sw ln band dashed"></i>80% range</span>
+      <span><i class="sw ln fc dashed"></i>Brain's tilt vs. market</span>
+      <span><i class="sw ln band dashed"></i>Typical swing (80%)</span>
     </div>
     <div id="chart"></div>
     <div id="tooltip" class="tooltip" hidden></div>
 
     <div class="cards">
-      <div class="card"><h3>Next <span class="h-days"></span> trading days</h3><div id="forecast"></div></div>
-      <div class="card"><h3>Can the brain read this stock?</h3><div id="quality"></div></div>
+      <div class="card"><h3>Brain's call for the next month</h3><div id="call"></div></div>
+      <div class="card"><h3>Why this rank</h3><div id="why"></div></div>
       <div class="card"><h3>Performance</h3><dl id="perf"></dl></div>
-      <div class="card"><h3>What moved the forecast</h3><div id="drivers"></div></div>
+      <div class="card"><h3>Earnings</h3><div id="earn"></div></div>
     </div>
     <div class="card wide">
-      <h3>Prediction diary <span class="muted small">(saved every night, scored when its day arrives)</span></h3>
+      <h3>Monthly diary <span class="muted small">(this stock's frozen rank each month, and what happened)</span></h3>
       <table class="tbl small" id="diary"><thead><tr>
-        <th>Made on</th><th class="r">Price then</th><th class="r">Predicted</th><th class="r">Range</th>
-        <th class="r">Actual</th><th>Result</th></tr></thead><tbody></tbody></table>
+        <th>Frozen on</th><th class="r">Rank</th><th class="r">Price then</th><th class="r">Month later</th>
+        <th class="r">vs. typical stock</th><th>Result</th></tr></thead><tbody></tbody></table>
     </div>
   </section>
 </main>
@@ -119,15 +143,15 @@
 <div id="map-tip" class="tooltip" hidden></div>
 
 <footer class="foot muted small">
-  Personal learning tool. Forecasts come from patterns in past prices only and are often wrong. Not financial advice.
-  Prices: Finnhub (live), Yahoo Finance via yfinance (daily history). Universe: S&amp;P 500 list from Wikipedia plus extras.
+  Personal learning project by Ageel Alramadhan. Rankings come from patterns in past prices and earnings and are often wrong. Not financial advice.
+  Prices: Finnhub (live), Yahoo Finance via yfinance (daily). Earnings: Finnhub. Universe: S&amp;P 500 list from Wikipedia plus extras.
   Charts: TradingView Lightweight Charts, d3.
 </footer>
 
 <dialog id="key-dialog">
   <form method="dialog">
     <h3>Finnhub API key</h3>
-    <p class="muted small">Paste your free key from finnhub.io. It is saved only in this browser on this computer, never in the repo.</p>
+    <p class="muted small">Optional, for live prices. Get a free key at finnhub.io. It is saved only in this browser on this device, never sent anywhere except Finnhub.</p>
     <input id="key-input" type="password" autocomplete="off" placeholder="Your Finnhub key">
     <div class="row">
       <button class="btn" value="clear">Remove key</button>
