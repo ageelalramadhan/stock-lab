@@ -148,3 +148,19 @@ dt, .kv span:first-child { white-space: nowrap; }
 .pctbar { display: inline-block; width: 46px; height: 6px; background: var(--grid); border-radius: 3px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
 .pctbar i { display: block; height: 100%; background: var(--accent); border-radius: 0 3px 3px 0; }
 .big-rank { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.sw.spyc { border-color: #c98500; }
+#paper-chart { height: 300px; }
+.hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+.hero .card b { display: block; font-size: 24px; font-variant-numeric: tabular-nums; margin: 2px 0; }
+.hero .card span { font-size: 12px; color: var(--text-muted); }
+.drive-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; margin: 6px 0 4px; }
+.drive-bar i { display: block; height: 100%; }
+.drive-key { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+.drive-key span { display: inline-flex; align-items: center; gap: 6px; }
+.drive-key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.move { display: grid; grid-template-columns: 26px 92px 70px 1fr; gap: 10px; padding: 8px 0; border-top: 1px solid var(--grid); font-size: 13px; align-items: start; }
+.move .num { width: 20px; height: 20px; border-radius: 50%; background: var(--surface-1); border: 1px solid var(--border); display: grid; place-items: center; font-size: 11px; }
+.move .why b { font-weight: 600; }
+.move .why a { color: var(--text-secondary); }
+.move .why .muted { display: block; font-size: 12px; margin-top: 2px; }

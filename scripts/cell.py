@@ -265,13 +265,19 @@ def model():
 
 # ---------------- honest test ----------------
 
-def walk_forward(panel, dates, months=36):
+START_EUR = 10000
+COST = 0.002   # rough cost of swapping the picks each month (fees + spread), taken off every month
+
+
+def walk_forward(panel, dates, spy, months=36):
     """Each month: train only on what was known, rank everyone, see what happened a month later."""
     weekly = set(dates[::-5])
     train_pool = panel[panel["date"].isin(weekly)].dropna(subset=["target"])
     test_idx = list(range(len(dates) - 1 - H, H * 13, -H))[:months][::-1]
     rows, series = [], []
     cum_b, cum_m = 0.0, 0.0
+    paper = []
+    val = {"brain": START_EUR, "momentum": START_EUR, "spy": START_EUR}
     for i in test_idx:
         d, cutoff = dates[i], dates[i - H]
         train = train_pool[train_pool["date"] <= cutoff]
@@ -290,6 +296,19 @@ def walk_forward(panel, dates, months=36):
         m_bot = t.nsmallest(q, "mom_12_1")["target"].mean()
         cum_b += top - bot
         cum_m += m_top - m_bot
+        # paper portfolio: put the money equally into the top 20, hold one month, repeat
+        b_ret = t.nlargest(BASKET, "pred")["fwd"].mean() - COST
+        m_ret = t.nlargest(BASKET, "mom_12_1")["fwd"].mean() - COST
+        si = spy.index.get_indexer([pd.Timestamp(d)])[0]
+        s_ret = float(spy.iloc[si + H] / spy.iloc[si] - 1) if si >= 0 and si + H < len(spy) else 0.0
+        if not paper:
+            paper.append({"time": pd.Timestamp(d).strftime("%Y-%m-%d"), **{k: START_EUR for k in val}})
+        val["brain"] *= 1 + b_ret
+        val["momentum"] *= 1 + m_ret
+        val["spy"] *= 1 + s_ret
+        end = spy.index[min(si + H, len(spy) - 1)]
+        paper.append({"time": end.strftime("%Y-%m-%d"), **{k: round(v, 2) for k, v in val.items()},
+                      "b_ret": round(float(b_ret), 4), "s_ret": round(s_ret, 4)})
         rows.append({"date": d, "ic": ic, "spread": top - bot, "m_ic": m_ic, "m_spread": m_top - m_bot})
         series.append({"time": pd.Timestamp(d).strftime("%Y-%m-%d"), "brain": round(cum_b, 4), "momentum": round(cum_m, 4)})
         print(f"  tested {pd.Timestamp(d).date()}: rank accuracy {ic:+.3f}, top minus bottom {top - bot:+.2%}")
@@ -300,7 +319,109 @@ def walk_forward(panel, dates, months=36):
         return {"months": int(n), "ic": float(ic.mean()), "ic_positive": float((ic > 0).mean()),
                 "spread": float(spread.mean()), "spread_wins": int((spread > 0).sum()),
                 "t": float(spread.mean() / (spread.std(ddof=1) / np.sqrt(n))) if n > 2 and spread.std() > 0 else 0.0}
-    return {"brain": summary(r["ic"], r["spread"]), "momentum": summary(r["m_ic"], r["m_spread"]), "series": series}
+    beat = sum(1 for x in paper[1:] if x["b_ret"] > x["s_ret"])
+    return {"brain": summary(r["ic"], r["spread"]), "momentum": summary(r["m_ic"], r["m_spread"]), "series": series,
+            "paper": paper, "paper_beat_spy": beat, "paper_months": len(paper) - 1, "cost": COST}
+
+
+# ---------------- why did it move ----------------
+
+NEWS_CACHE = DATA / "news_cache.json"
+NEWS_PER_RUN = int(os.environ.get("NEWS_PER_RUN", "300"))
+
+
+def find_moves(frames, sector_of, earnings, days=300):
+    """For every stock: its unusually big days, and what most likely caused each one."""
+    rets = pd.DataFrame({s: df["Close"].pct_change() for s, df in frames.items()})
+    vols = pd.DataFrame({s: df["Volume"] / df["Volume"].rolling(50).mean().shift(1) for s, df in frames.items()})
+    typical = rets.rolling(63).std().shift(1)
+    sec_cols = pd.Series({s: sector_of.get(s, "Other") for s in rets.columns})
+    sector_ret = rets.T.groupby(sec_cols).median().T
+    mkt = rets[MARKET]
+    trading_days = rets.index
+    window = trading_days[-days:]
+
+    # which trading day did each earnings report hit? (after close: the next day)
+    hit = {}
+    if earnings is not None and len(earnings):
+        for _, e in earnings.iterrows():
+            try:
+                d = pd.Timestamp(e["date"])
+            except Exception:
+                continue
+            j = trading_days.searchsorted(d)
+            if j >= len(trading_days):
+                continue
+            day = trading_days[j]
+            if str(e.get("hour", "")).lower() == "amc" and trading_days[j] == d and j + 1 < len(trading_days):
+                day = trading_days[j + 1]
+            hit[(e["symbol"], day)] = e.get("surprise")
+
+    out = {}
+    for s in rets.columns:
+        r_ = rets[s].reindex(window)
+        z = (r_ / typical[s].reindex(window)).abs()
+        big = r_[(z >= 2.5) & (r_.abs() >= 0.03)]
+        sec = sector_of.get(s, "Other")
+        moves = []
+        for day, ret in big.items():
+            m, sr = float(mkt.get(day, 0) or 0), float(sector_ret.at[day, sec]) if sec in sector_ret else 0.0
+            same = lambda x: np.sign(x) == np.sign(ret) and abs(x) >= 0.5 * abs(ret)
+            if (s, day) in hit:
+                cause, sur = "earnings", hit[(s, day)]
+            elif s in NOT_RANKED or same(m):
+                cause, sur = "market", None
+            elif same(sr):
+                cause, sur = "sector", None
+            else:
+                cause, sur = "company", None
+            moves.append({"date": day.strftime("%Y-%m-%d"), "ret": r(ret), "market": r(m), "sector": r(sr),
+                          "volume_x": r(vols.at[day, s], 1), "cause": cause,
+                          "surprise": r(sur) if sur is not None and not pd.isna(sur) else None})
+        counts = {k: sum(1 for x in moves if x["cause"] == k) for k in ("earnings", "market", "sector", "company")}
+        top = sorted(moves, key=lambda x: -abs(x["ret"]))[:8]
+        out[s] = {"top": sorted(top, key=lambda x: x["date"]), "counts": counts, "total": len(moves)}
+    return out
+
+
+def attach_news(moves, priority):
+    """Look up a headline for company-specific and earnings moves (Finnhub, cached, a few hundred per night)."""
+    cache = json.loads(NEWS_CACHE.read_text()) if NEWS_CACHE.exists() else {}
+    key = os.environ.get("FINNHUB_KEY", "")
+    todo = []
+    for s, m in moves.items():
+        for mv in m["top"]:
+            k = f"{s}|{mv['date']}"
+            if mv["cause"] in ("company", "earnings") and k not in cache:
+                todo.append((0 if s in priority else 1, -abs(mv["ret"]), s, mv["date"]))
+    todo.sort()
+    fetched = 0
+    if key and not DEMO:
+        for _, _, s, d in todo[:NEWS_PER_RUN]:
+            day = pd.Timestamp(d)
+            url = (f"https://finnhub.io/api/v1/company-news?symbol={s.replace('-', '.')}"
+                   f"&from={(day - timedelta(days=1)).date()}&to={day.date()}&token={key}")
+            try:
+                items = json.loads(urllib.request.urlopen(url, timeout=20).read())
+            except Exception:
+                time.sleep(1.1)
+                continue
+            pick = None
+            for it in sorted(items or [], key=lambda x: x.get("datetime", 0)):
+                h = it.get("headline", "")
+                if h and (s in h or s.split("-")[0] in it.get("related", "")):
+                    pick = it
+                    break
+            pick = pick or (items[0] if items else None)
+            cache[f"{s}|{d}"] = ({"headline": pick.get("headline", "")[:160], "source": pick.get("source", ""),
+                                  "url": pick.get("url", "")} if pick else None)
+            fetched += 1
+            time.sleep(1.1)  # stay under 60 calls a minute
+        NEWS_CACHE.write_text(json.dumps(cache, separators=(",", ":")))
+    for s, m in moves.items():
+        for mv in m["top"]:
+            mv["news"] = cache.get(f"{s}|{mv['date']}")
+    print(f"News: {fetched} headlines fetched this run, {len(todo) - fetched} still to look up")
 
 
 # ---------------- live record ----------------
@@ -354,7 +475,22 @@ def update_rank_log(panel_latest, frames, dates, run_date):
                         "bottom_ret": r(bot["ret"].astype(float).mean()) if done else None,
                         "all_ret": r(g["ret"].astype(float).median()) if done else None,
                         "spy_ret": r(spy_ret)})
-    return log, baskets
+    # live paper portfolio: 10,000 EUR into each month's frozen top 20
+    value, months_done = START_EUR, []
+    for b in baskets:
+        if b["scored"] and b["top_ret"] is not None:
+            value *= 1 + b["top_ret"] - COST
+            spy_v = b["spy_ret"]
+            months_done.append({"formed": b["formed"], "ret": b["top_ret"], "spy": spy_v, "value": round(value, 2)})
+    cur = next((b for b in reversed(baskets) if not b["scored"]), None)
+    holdings = []
+    if cur:
+        g = log[(log["formed"] == cur["formed"])].sort_values("rank").head(BASKET)
+        holdings = [{"symbol": x["symbol"], "rank": int(x["rank"]), "base_close": r(x["base_close"], 2)} for _, x in g.iterrows()]
+    live_paper = {"start": START_EUR, "started": baskets[0]["formed"] if baskets else None, "months": months_done,
+                  "value_before_current": round(value, 2), "current_formed": cur["formed"] if cur else None,
+                  "holdings": holdings}
+    return log, baskets, live_paper
 
 
 # ---------------- helpers ----------------
@@ -393,7 +529,7 @@ def main():
     dates = np.sort(panel["date"].unique())
     dates = pd.DatetimeIndex(dates)
 
-    test = walk_forward(panel, dates)
+    test = walk_forward(panel, dates, frames[MARKET]["Close"])
     print("Backtest brain:", test["brain"])
     print("Backtest momentum:", test["momentum"])
 
@@ -422,7 +558,7 @@ def main():
     latest["pct"] = 1 - (latest["rank"] - 1) / max(len(latest) - 1, 1)
     latest = latest.set_index("symbol")
 
-    log, baskets = update_rank_log(latest.reset_index(), frames, dates, run_date)
+    log, baskets, live_paper = update_rank_log(latest.reset_index(), frames, dates, run_date)
     ranked_order = latest.sort_values("rank").index.tolist()
     tentacles = [s for s in PINNED if s in frames] + [s for s in ranked_order if s not in PINNED]
     tentacles = tentacles[:N_TENTACLES]
@@ -445,6 +581,8 @@ def main():
                 links.append([key[0], key[1], round(float(row[j]), 2)])
 
     earn = earnings if earnings is not None else pd.DataFrame()
+    moves = find_moves(frames, {s: meta[s]["sector"] for s in frames}, earn)
+    attach_news(moves, tent)
     today = dates[-1]
     mom_now = full.sort_values("date").groupby("symbol")["mom_12_1"].last()
     cells = []
@@ -504,6 +642,7 @@ def main():
                          "last_surprise": r(last_e["surprise"]) if last_e is not None else None,
                          "next_date": next_e},
             "diary": diary,
+            "moves": moves.get(s, {"top": [], "counts": {}, "total": 0}),
         }
         write_js(STOCK_DIR / f"{s}.js", f"window.STOCK_DETAIL=window.STOCK_DETAIL||{{}};window.STOCK_DETAIL[{json.dumps(s)}]=", detail)
         cells.append({"s": s, "n": m["name"], "sec": m["sector"], "px": r(last_close, 2), "d1": chg(1),
@@ -521,7 +660,7 @@ def main():
     out = {"generated": run_date, "horizon_days": H, "data_through": today.strftime("%Y-%m-%d"),
            "universe_size": len(cells), "ranked": int(len(latest)), "tentacles": tentacles,
            "snapshots": int(len(train)), "inputs": [LABELS[c] for c in cols], "test": test, "importance": importance, "baskets": baskets,
-           "basket_size": BASKET, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
+           "basket_size": BASKET, "paper_live": live_paper, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
            "runtime_min": round((time.time() - t0) / 60, 1)}
     write_js(DATA / "cell.js", "window.CELL=", out)
     print(f"Done in {out['runtime_min']} min: {len(cells)} stocks, {len(latest)} ranked, {len(tentacles)} tentacles")

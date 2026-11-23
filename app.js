@@ -84,10 +84,11 @@
     });
   }
   seg("#view-seg", "view", (v) => {
-    ["map", "list", "track"].forEach((k) => ($("#" + k + "-view").hidden = v !== k));
+    ["paper", "map", "list", "track"].forEach((k) => ($("#" + k + "-view").hidden = v !== k));
     if (v === "list") renderList();
-    if (v === "map") resizeMap();
+    if (v === "map") { resizeMap(); if (!settled) { settle(); } }
     if (v === "track") renderTrack();
+    if (v === "paper") renderPaper();
   });
   seg("#color-seg", "color", (v) => {
     colorKey = v;
@@ -172,6 +173,65 @@
     $("#basket-picks").innerHTML = cur ? `<b>Current top ${CELL.basket_size}</b> (frozen ${cur.formed}): ${cur.top.join(", ")}<br><b>Current bottom ${CELL.basket_size}:</b> ${cur.bottom.join(", ")}` : "";
   }
 
+  // ---------- paper portfolio ----------
+  const eur = (x) => (x == null ? "n/a" : "\u20ac" + Math.round(x).toLocaleString("de-DE"));
+  let paperChart = null;
+  function renderPaper() {
+    const P = T.paper || [];
+    $("#cost").textContent = ((T.cost || 0) * 100).toFixed(1) + "%";
+    if (P.length) {
+      const last = P[P.length - 1], first = P[0];
+      const card = (label, v, sub) => `<div class="card"><span>${label}</span><b>${eur(v)}</b><span>${sub}</span></div>`;
+      $("#paper-hero").innerHTML =
+        card("Brain's top " + CELL.basket_size, last.brain, pct(last.brain / first.brain - 1, 0) + " in " + T.paper_months + " months") +
+        card("Just holding the S&P 500", last.spy, pct(last.spy / first.spy - 1, 0) + " in " + T.paper_months + " months") +
+        card("Momentum rule", last.momentum, pct(last.momentum / first.momentum - 1, 0) + " in " + T.paper_months + " months");
+      $("#paper-caveat").innerHTML = `Starting with ${eur(first.brain)} on ${first.time}. The brain's picks beat the S&amp;P 500 in <b>${T.paper_beat_spy} of ${T.paper_months}</b> months.
+        <b>Read this as an optimistic upper bound:</b> the test only includes companies that are in the S&amp;P 500 today, so it never held a company that later collapsed and was removed.
+        Twenty stocks from the same hot sector also swing much harder than the whole market, both ways. The live portfolio below is the honest test.`;
+      if (!paperChart) {
+        paperChart = LC.createChart($("#paper-chart"), {
+          autoSize: true,
+          layout: { background: { color: css("--surface-1") }, textColor: css("--text-muted"), fontSize: 12 },
+          grid: { vertLines: { visible: false }, horzLines: { color: css("--grid") } },
+          rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false },
+          localization: { priceFormatter: (p) => eur(p) },
+        });
+        [["brain", "#3987e5"], ["spy", "#c98500"], ["momentum", css("--text-muted")]].forEach(([k, col]) => {
+          trackLine(paperChart, col).setData(P.map((x) => ({ time: x.time, value: x[k] })));
+        });
+        paperChart.timeScale().fitContent();
+      }
+    }
+    const L = CELL.paper_live || {};
+    const hold = L.holdings || [];
+    let worth = 0;
+    const rows = hold.map((h) => {
+      const c = bySym[h.symbol];
+      const now = c ? price(c) : null;
+      const chg = now && h.base_close ? now / h.base_close - 1 : 0;
+      const slice = (L.value_before_current || L.start) / (hold.length || 1);
+      worth += slice * (1 + chg);
+      return `<tr data-sym="${h.symbol}"><td><span class="sym">${h.symbol}</span><span class="sub">${c ? c.n : ""}</span></td><td class="r">#${h.rank}</td>
+        <td class="r">${money(h.base_close)}</td><td class="r">${money(now)}</td><td class="r"><span class="${signCls(chg)}">${pct(chg)}</span></td><td class="r">${eur(slice * (1 + chg))}</td></tr>`;
+    });
+    $("#holdings tbody").innerHTML = rows.join("") || '<tr><td colspan="6" class="muted">The first picks freeze on the next nightly run.</td></tr>';
+    const done = L.months || [];
+    const total = hold.length ? worth : L.value_before_current;
+    $("#live-paper").innerHTML = L.started ? `
+      <div class="kv"><span>Started</span><span>${eur(L.start)} on ${L.started}</span></div>
+      <div class="kv"><span>Worth now (with live prices if your key is set)</span><span><b>${eur(total)}</b> (${pct(total / L.start - 1)})</span></div>
+      <div class="kv"><span>Months completed</span><span>${done.length}${done.length ? ", beat the S&P 500 in " + done.filter((m) => m.ret > m.spy).length : ""}</span></div>
+      <div class="kv"><span>Current picks frozen on</span><span>${L.current_formed || "n/a"}, swapped about a month later</span></div>` : "";
+  }
+  $("#holdings tbody").addEventListener("click", (e) => {
+    const tr = e.target.closest("tr[data-sym]");
+    if (tr) select(tr.dataset.sym);
+  });
+  function trackLine(ch, color) {
+    return ch.addLineSeries({ color, lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+  }
+
   // ---------- cell map ----------
   const canvas = $("#map"), ctx = canvas.getContext("2d");
   let W = 0, Hh = 0;
@@ -211,6 +271,12 @@
     sim.alpha(0.6);
   }
   window.addEventListener("resize", resizeMap);
+  let settled = false;
+  function settle() {
+    nodes.forEach((n) => { const [x, y] = sectorCenter(n.c.sec); n.x = x + (Math.random() - 0.5) * 60; n.y = y + (Math.random() - 0.5) * 60; });
+    for (let i = 0; i < 250; i++) sim.tick();
+    settled = true;
+  }
 
   const colRank = d3.scaleLinear().domain([0, 0.5, 1]).range(["#e66767", "#6b6a65", "#3987e5"]).clamp(true);
   const colD1 = d3.scaleLinear().domain([-0.04, 0, 0.04]).range(["#e66767", "#6b6a65", "#3987e5"]).clamp(true);
@@ -382,6 +448,9 @@
     fcMid.setData(p.map((x) => ({ time: x.time, value: x.mid })));
     fcLow.setData(p.map((x) => ({ time: x.time, value: x.low })));
     fcHigh.setData(p.map((x) => ({ time: x.time, value: x.high })));
+    const mv = (d.moves && d.moves.top) || [];
+    candles.setMarkers(mv.map((m, i) => ({ time: m.date, position: m.ret > 0 ? "aboveBar" : "belowBar",
+      color: CAUSE[m.cause].color, shape: "circle", text: String(i + 1) })));
     if (fit) chart.timeScale().setVisibleRange({ from: c[Math.max(0, c.length - rangeDays)].time, to: p[p.length - 1].time });
   }
   const tip = $("#tooltip");
@@ -406,6 +475,39 @@
     tip.style.left = x + "px"; tip.style.top = box.top + param.point.y + 16 + "px"; tip.hidden = false;
   });
   $("#chart").addEventListener("mouseleave", () => (tip.hidden = true));
+
+  // ---------- why did it move ----------
+  const esc = (t) => String(t || "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  const CAUSE = {
+    earnings: { color: "#d95926", label: "Earnings report" },
+    market: { color: "#c98500", label: "Whole market moved" },
+    sector: { color: "#9085e9", label: "Its sector moved" },
+    company: { color: "#3987e5", label: "Company-specific news" },
+  };
+  function renderMoves(d) {
+    const M = d.moves || { top: [], counts: {}, total: 0 };
+    const tot = M.total || 0;
+    if (!tot) {
+      $("#drives").innerHTML = '<p class="note">No unusually big days in the past year. This stock mostly moves calmly with the market.</p>';
+      $("#moves").innerHTML = "";
+      return;
+    }
+    const parts = Object.keys(CAUSE).map((k) => [k, M.counts[k] || 0]).filter((x) => x[1]);
+    const main = parts.slice().sort((a, b) => b[1] - a[1])[0];
+    $("#drives").innerHTML = `<p class="note" style="margin-top:0">${tot} unusually big days in the past year (moves well beyond its normal daily swing).
+        Most often: <b>${CAUSE[main[0]].label.toLowerCase()}</b> (${main[1]} of ${tot}).</p>
+      <div class="drive-bar">${parts.map(([k, n]) => `<i style="width:${(n / tot) * 100}%;background:${CAUSE[k].color}" title="${CAUSE[k].label}: ${n}"></i>`).join("")}</div>
+      <div class="drive-key">${parts.map(([k, n]) => `<span><i style="background:${CAUSE[k].color}"></i>${CAUSE[k].label}: ${n}</span>`).join("")}</div>`;
+    $("#moves").innerHTML = M.top.map((m, i) => {
+      const ctx = `Market ${pct(m.market)}, its sector ${pct(m.sector)}, trading volume ${m.volume_x ?? "?"}x normal`;
+      let why = `<b>${CAUSE[m.cause].label}</b>`;
+      if (m.cause === "earnings" && m.surprise != null) why += `: profit ${m.surprise >= 0 ? "beat" : "missed"} estimates by ${pct(Math.abs(m.surprise), 0).replace("+", "")}`;
+      if (m.news && m.news.headline) why += `<br><a href="${esc(m.news.url)}" target="_blank" rel="noopener">${esc(m.news.headline)}</a> <span class="muted" style="display:inline">(${esc(m.news.source)})</span>`;
+      else if (m.cause === "company" || m.cause === "earnings") why += ' <span class="muted" style="display:inline">(headline lookup pending)</span>';
+      return `<div class="move"><span class="num" style="border-color:${CAUSE[m.cause].color}">${i + 1}</span><span>${m.date}</span>
+        <span class="${signCls(m.ret)}">${pct(m.ret)}</span><span class="why">${why}<span class="muted">${ctx}</span></span></div>`;
+    }).join("");
+  }
 
   // ---------- detail ----------
   function loadDetail(sym, cb) {
@@ -446,7 +548,7 @@
         <div class="kv"><span>Position</span><span>${topPct(k.pct)}</span></div>
         <div class="kv"><span>Expected vs. typical stock</span><span class="${signCls(k.score)}">${pct(k.score)}</span></div>
         <div class="kv"><span>Typical swing, 1 month</span><span>${money(end.low).split(".")[0]} to ${money(end.high).split(".")[0]}</span></div>
-        <p class="note">A ranking, not a price target. The brain's expected edge is small next to how much the stock usually swings, so read the overall verdict in Track record before trusting any single rank.</p>`;
+        <p class="note">A ranking, not a price target. The brain's expected edge is small next to how much the stock usually swings, so check the Paper portfolio and Test details before trusting any single rank.</p>`;
       $("#why").innerHTML = (k.why || []).map((w) => {
         if (w.kind === "pct") {
           const v = w.pct == null ? null : w.pct;
@@ -464,6 +566,7 @@
       <div class="kv"><span>Next report</span><span>${e.next_date || "not announced"}</span></div>
       <p class="note">Earnings data builds up nightly. The brain starts using it once there is enough history.</p>`;
 
+    renderMoves(d);
     const rows = (d.diary || []).slice().reverse();
     $("#diary tbody").innerHTML = rows.length ? rows.map((r) => {
       const done = r.end_close != null;
@@ -495,6 +598,7 @@
     setTimeout(() => {
       redraw = false;
       renderList(); renderStats();
+      if (!$("#paper-view").hidden) renderPaper();
       if (details[selected]) { renderHeader(); drawChart(false); }
     }, 1500);
   }
@@ -553,9 +657,7 @@
 
   // ---------- start ----------
   renderStats();
-  resizeMap();
-  nodes.forEach((n) => { const [x, y] = sectorCenter(n.c.sec); n.x = x + (Math.random() - 0.5) * 60; n.y = y + (Math.random() - 0.5) * 60; });
-  for (let i = 0; i < 250; i++) sim.tick();
+  renderPaper();
   requestAnimationFrame(draw);
   select(selected);
   connect();

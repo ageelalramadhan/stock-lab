@@ -24,9 +24,10 @@
   <section class="panel left">
     <div class="panel-head">
       <div class="seg" id="view-seg">
-        <button data-view="map" class="on">Cell map</button>
+        <button data-view="paper" class="on">Paper portfolio</button>
         <button data-view="list">Rankings</button>
-        <button data-view="track">Track record</button>
+        <button data-view="track">Test details</button>
+        <button data-view="map">Cell map</button>
       </div>
       <div class="tools">
         <input id="search" type="search" placeholder="Find a stock, e.g. MSFT" autocomplete="off" list="sym-list">
@@ -34,7 +35,29 @@
       </div>
     </div>
 
-    <div id="map-view">
+    <div id="paper-view">
+      <div class="track-intro">
+        <h2>If you had followed the brain with pretend money</h2>
+        <p class="note">Every month: split the money equally across the brain's <b>top <span class="bsize"></span></b> stocks, hold for one month, then swap to the new top <span class="bsize"></span>.
+          Compared with simply holding the S&amp;P 500 (SPY) and with the plain momentum rule. A cost of <span id="cost"></span> a month is taken off for trading. No taxes.</p>
+      </div>
+      <div class="hero" id="paper-hero"></div>
+      <div class="legend">
+        <span><i class="sw ln brainc"></i>Brain's top <span class="bsize"></span></span>
+        <span><i class="sw ln spyc"></i>Just holding the S&amp;P 500</span>
+        <span><i class="sw ln momc"></i>Momentum rule's top <span class="bsize"></span></span>
+      </div>
+      <div id="paper-chart"></div>
+      <p class="note" id="paper-caveat"></p>
+      <div class="card wide">
+        <h3>Live pretend portfolio <span class="muted small">(real picks, frozen monthly, no hindsight)</span></h3>
+        <div id="live-paper"></div>
+        <table class="tbl small" id="holdings"><thead><tr>
+          <th>Stock</th><th class="r">Rank</th><th class="r">Bought at</th><th class="r">Now</th><th class="r">Change</th><th class="r">Worth now</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="map-view" hidden>
       <div class="map-tools">
         <span class="muted small">Color shows</span>
         <div class="seg" id="color-seg">
@@ -130,6 +153,11 @@
       <div class="card"><h3>Why this rank</h3><div id="why"></div></div>
       <div class="card"><h3>Performance</h3><dl id="perf"></dl></div>
       <div class="card"><h3>Earnings</h3><div id="earn"></div></div>
+    </div>
+    <div class="card wide">
+      <h3>Biggest moves in the past year, and why <span class="muted small">(numbered on the chart)</span></h3>
+      <div id="drives"></div>
+      <div id="moves"></div>
     </div>
     <div class="card wide">
       <h3>Monthly diary <span class="muted small">(this stock's frozen rank each month, and what happened)</span></h3>
