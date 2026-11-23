@@ -40,3 +40,8 @@ jobs:
           path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
+        continue-on-error: true      # GitHub sometimes fails this step for no reason, so try once more
+      - if: steps.deployment.outcome == 'failure'
+        run: sleep 45
+      - if: steps.deployment.outcome == 'failure'
+        uses: actions/deploy-pages@v4
