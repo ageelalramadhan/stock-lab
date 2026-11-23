@@ -33,6 +33,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.linear_model import LogisticRegression
 
 ROOT = Path(__file__).resolve().parents[1]
 CFG = json.loads((ROOT / "config" / "tickers.json").read_text())
@@ -209,6 +210,9 @@ def stock_features(df, mkt_ret):
     f["beta_1y"] = r.rolling(252).cov(m) / m.rolling(252).var()
     f["max_day_1m"] = r.rolling(21).max()
     f["size"] = np.log((c * df["Volume"]).rolling(63).mean())
+    f["ret_1w"] = c / c.shift(5) - 1
+    f["day_ret"] = r
+    f["day_z"] = r / r.rolling(63).std().shift(1)   # today's move in multiples of a normal day
     f["fwd"] = c.shift(-H) / c - 1           # what happens next month
     f["close"] = c
     return f
@@ -245,7 +249,13 @@ def build_panel(frames, sector_of, earnings):
             p["earn_days"] = (p["date"] - p["edate"]).dt.days
             p = p.drop(columns=["surprise", "edate"])
 
+    spy_c = frames[MARKET]["Close"]
+    mk = pd.DataFrame({"date": pd.to_datetime(spy_c.index).astype("datetime64[ns]"), "mkt_1m": spy_c.pct_change(21).values,
+                       "mkt_vol": (spy_c.pct_change().rolling(21).std() * np.sqrt(252)).values})
+    p["date"] = pd.to_datetime(p["date"]).astype("datetime64[ns]")
+    p = p.merge(mk, on="date", how="left")
     ranked = p[~p["symbol"].isin(NOT_RANKED)].copy()
+    ranked["ret_1w_pct"] = ranked.groupby("date")["ret_1w"].rank(pct=True)
     for col in RANKED:  # percentile vs. all other stocks that same day (0 = lowest, 1 = highest)
         ranked[col] = ranked.groupby("date")[col].rank(pct=True)
     ranked["target"] = ranked["fwd"] - ranked.groupby("date")["fwd"].transform("median")
@@ -325,6 +335,94 @@ def walk_forward(panel, dates, spy, months=36):
     return {"brain": summary(r["ic"], r["spread"]), "momentum": summary(r["m_ic"], r["m_spread"]), "series": series,
             "paper": paper, "paper_beat_spy": beat, "paper_months": len(paper) - 1, "cost": COST,
             "_obs": pd.concat(obs, ignore_index=True)}
+
+
+# ---------------- likelihoods: chance a stock is higher in a month ----------------
+
+ODDS_PCT = {"year": "mom_12_1", "month": "rev_1m", "week": "ret_1w_pct", "jumpy": "vol_3m",
+            "trend": "dist_ma200", "industry": "sector_3m"}          # already percentiles (0 to 1)
+ODDS_KEYS = list(ODDS_PCT) + ["day", "mkt_1m", "mkt_vol"]
+
+
+def odds_x(df, stats):
+    X = pd.DataFrame({k: df[c] - 0.5 for k, c in ODDS_PCT.items()}, index=df.index)
+    X["day"] = df["day_z"].clip(-4, 4) / 4
+    for k in ("mkt_1m", "mkt_vol"):
+        X[k] = (df[k] - stats[k][0]) / (stats[k][1] or 1)
+    return X[ODDS_KEYS].fillna(0).clip(-3, 3)
+
+
+def odds_fit(train):
+    stats = {k: (float(train[k].mean()), float(train[k].std())) for k in ("mkt_1m", "mkt_vol")}
+    m = LogisticRegression(C=0.05, max_iter=300).fit(odds_x(train, stats), (train["fwd"] > 0).astype(int))
+    return m, stats
+
+
+def build_odds(panel, full, dates, months=36):
+    """A simple, explainable model: start from how often stocks rise in a month, then nudge that
+    chance up or down for each clue. Tested by walking forward month by month, never peeking."""
+    weekly = set(dates[::-5])
+    pool = panel[panel["date"].isin(weekly)].dropna(subset=["fwd", "mom_12_1"])
+    test_idx = list(range(len(dates) - 1 - H, H * 13, -H))[:months][::-1]
+    got = []
+    for i in test_idx:
+        d, cutoff = dates[i], dates[i - H]
+        train = pool[pool["date"] <= cutoff]
+        test = panel[panel["date"] == d].dropna(subset=["fwd", "mom_12_1"])
+        if len(train) < 5000 or len(test) < 50:
+            continue
+        m, st = odds_fit(train)
+        got.append(pd.DataFrame({"p": m.predict_proba(odds_x(test, st))[:, 1], "up": (test["fwd"] > 0).values}))
+    o = pd.concat(got, ignore_index=True)
+    base = float(o["up"].mean())
+    bins = []
+    for lo in range(30, 85, 5):
+        g = o[(o["p"] >= lo / 100) & (o["p"] < (lo + 5) / 100)]
+        if len(g) >= 40:
+            bins.append({"lo": lo, "hi": lo + 5, "said": r(g["p"].mean(), 3), "happened": r(g["up"].mean(), 3), "n": int(len(g))})
+    summary = {"months": len(got), "n": int(len(o)), "base": r(base, 3),
+               "hit": r(((o["p"] >= 0.5) == o["up"]).mean(), 3), "hit_base": r(max(base, 1 - base), 3),
+               "brier": r(((o["p"] - o["up"]) ** 2).mean(), 4), "brier_base": r(((base - o["up"]) ** 2).mean(), 4),
+               "spread": [r(o["p"].quantile(0.05), 3), r(o["p"].quantile(0.95), 3)], "bins": bins}
+
+    # plain history for each clue: how often did such stocks end the month higher?
+    up = pool["fwd"] > 0
+
+    def rate(mask):
+        return {"rate": r(up[mask].mean(), 3), "n": int(mask.sum())} if mask.sum() >= 50 else None
+    freq = {"all": {"rate": r(up.mean(), 3), "n": int(len(pool))}}
+    for k, c in ODDS_PCT.items():
+        freq[k + "_high"], freq[k + "_low"] = rate(pool[c] >= 0.8), rate(pool[c] <= 0.2)
+    freq["day_high"], freq["day_low"] = rate(pool["day_z"] >= 2.5), rate(pool["day_z"] <= -2.5)
+    ms = pool.groupby("date")["mkt_1m"].first()
+    freq["market_high"] = rate(pool["mkt_1m"] >= ms.quantile(0.8))
+    freq["market_low"] = rate(pool["mkt_1m"] <= ms.quantile(0.2))
+    summary["freq"] = freq
+
+    # today's chances, and what moves each one
+    m, st = odds_fit(pool)
+    today = panel[panel["date"] == dates[-1]].dropna(subset=["mom_12_1"])
+    X = odds_x(today, st)
+    w, b = m.coef_[0], float(m.intercept_[0])
+    sig = lambda z: 1 / (1 + np.exp(-z))
+    z = b + X.values @ w
+    raw = full[full["date"] == dates[-1]].set_index("symbol")
+    per = {}
+    for n_, (sym, zi) in enumerate(zip(today["symbol"], z)):
+        x = X.iloc[n_].values
+        pf = float(sig(zi))
+        why = {k: float(pf - sig(zi - w[j] * x[j])) for j, k in enumerate(ODDS_KEYS[:7])}
+        why["market"] = float(pf - sig(zi - w[7] * x[7] - w[8] * x[8]))
+        rw, t = raw.loc[sym], today.iloc[n_]
+        vals = {"year": [r(rw["mom_12_1"], 3), r(t["mom_12_1"], 2)], "month": [r(rw["rev_1m"], 3), r(t["rev_1m"], 2)],
+                "week": [r(rw["ret_1w"], 3), r(t["ret_1w_pct"], 2)], "jumpy": [r(rw["vol_3m"], 3), r(t["vol_3m"], 2)],
+                "trend": [r(rw["dist_ma200"], 3), r(t["dist_ma200"], 2)], "industry": [r(rw["sector_3m"], 3), r(t["sector_3m"], 2)],
+                "day": [r(rw["day_ret"], 4), r(rw["day_z"], 1)], "market": [r(rw["mkt_1m"], 3), None]}
+        per[sym] = {"p": r(pf, 3), "vp": r(t["vol_3m"], 2),
+                    "why": sorted(({"k": k, "d": r(v, 3), "v": vals[k]} for k, v in why.items()), key=lambda q: -abs(q["d"]))}
+    summary["neutral"] = r(float(sig(b)), 3)
+    print(f"Odds model: base {base:.3f}, hit {summary['hit']} vs {summary['hit_base']}, brier {summary['brier']} vs {summary['brier_base']}, spread {summary['spread']}")
+    return summary, per
 
 
 # ---------------- today's story (for the living cell) ----------------
@@ -648,6 +746,7 @@ def main():
 
     test = walk_forward(panel, dates, frames[MARKET]["Close"])
     obs = test.pop("_obs")
+    odds, odds_per = build_odds(panel, full, dates)
     print("Backtest brain:", test["brain"])
     print("Backtest momentum:", test["momentum"])
 
@@ -768,6 +867,7 @@ def main():
                          "next_date": next_e},
             "diary": diary,
             "moves": moves.get(s, {"top": [], "counts": {}, "total": 0}),
+            "odds": odds_per.get(s),
         }
         write_js(STOCK_DIR / f"{s}.js", f"window.STOCK_DETAIL=window.STOCK_DETAIL||{{}};window.STOCK_DETAIL[{json.dumps(s)}]=", detail)
         cells.append({"s": s, "n": m["name"], "sec": m["sector"], "px": r(last_close, 2), "d1": chg(1),
@@ -775,6 +875,7 @@ def main():
                       "rk": int(L["rank"]) if L is not None else None, "pct": r(L["pct"], 3) if L is not None else None,
                       "sc": r(score), "mom": r(mom_now.get(s)),
                       "en": next_e, "es": r(last_e["surprise"]) if last_e is not None else None,
+                      "p": odds_per[s]["p"] if s in odds_per else None, "vp": odds_per[s]["vp"] if s in odds_per else None,
                       "tz": r(per[s]["z"], 1) if s in per else None, "tc": per[s]["cause"] if s in per else None,
                       "tsr": r(per[s]["sector"]) if s in per else None, "tvx": r(per[s]["vx"], 1) if s in per else None,
                       "t": 1 if s in tent else 0, "pin": 1 if s in PINNED else 0})
@@ -787,7 +888,7 @@ def main():
     out = {"generated": run_date, "horizon_days": H, "data_through": today.strftime("%Y-%m-%d"),
            "universe_size": len(cells), "ranked": int(len(latest)), "tentacles": tentacles,
            "snapshots": int(len(train)), "inputs": [LABELS[c] for c in cols], "test": test, "importance": importance, "baskets": baskets,
-           "basket_size": BASKET, "today": tday, "paper_live": live_paper, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
+           "basket_size": BASKET, "today": tday, "odds": odds, "paper_live": live_paper, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
            "runtime_min": round((time.time() - t0) / 60, 1)}
     write_js(DATA / "cell.js", "window.CELL=", out)
     game = build_game(obs, full, frames, meta, latest, dates)

@@ -220,3 +220,68 @@ h4.q { margin: 16px 0 8px; font-size: 14px; font-weight: 600; }
 
 body.cellview #stats { display: none; }
 .map-legend .coreglow { width: 14px; height: 14px; border-radius: 50%; background: radial-gradient(circle, rgba(57,135,229,0.9), rgba(57,135,229,0)); display: inline-block; }
+
+/* ================= v3: one simple screen built on likelihoods ================= */
+main { padding: 16px 20px; }
+.top { gap: 12px; flex-wrap: wrap; }
+.brand { align-items: center; }
+.top-right input { background: var(--bg); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 13px; width: 210px; }
+#view-seg button { font-size: 13px; padding: 7px 14px; }
+.cell-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr); gap: 16px; align-items: start; }
+.cell-grid[hidden] { display: none; }
+@media (max-width: 1100px) { .cell-grid { grid-template-columns: 1fr; } }
+.panel h2 { font-size: 18px; }
+.lead { color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin: 4px 0 10px; max-width: 78ch; }
+.lead b { color: var(--text-primary); }
+#cell-wrap { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 78vh; margin: 0 auto; }
+#cell { width: 100%; height: 100%; display: block; }
+.how { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); margin: 10px 0 6px; }
+.how span { display: flex; align-items: center; gap: 8px; }
+.how b { color: var(--text-primary); font-weight: 600; }
+.how i { flex: none; width: 16px; height: 16px; display: inline-block; }
+.k-out { border-radius: 50%; background: radial-gradient(circle, #e66767 0 25%, #6b6a65 26% 55%, #3987e5 56% 100%); }
+.k-edge { border-radius: 50%; border: 2px solid #3987e5; border-left-color: #e66767; }
+.k-ripple { border-radius: 50%; border: 2px solid var(--text-secondary); box-shadow: 0 0 0 3px rgba(195,194,183,0.2); }
+
+#company h3 { margin: 18px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.co-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.co-price { text-align: right; display: flex; flex-direction: column; }
+.chance { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-top: 12px; }
+.chance-num b { display: block; font-size: 44px; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
+.chance-num span { font-size: 12px; color: var(--text-muted); line-height: 1.3; display: block; margin-top: 4px; }
+.oddsbar { position: relative; height: 12px; border-radius: 6px; background: var(--grid); overflow: hidden; }
+.oddsbar i { display: block; height: 100%; border-radius: 0 6px 6px 0; background: var(--accent); }
+.oddsbar em { position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background: var(--text-primary); }
+.oddsbar-lbl { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.ch-word { font-size: 15px; font-weight: 600; margin-top: 6px; }
+.why-start { font-size: 13px; color: var(--text-secondary); margin: 0 0 8px; }
+.why-row { display: grid; grid-template-columns: 1fr 120px 84px; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--grid); font-size: 13px; }
+.why-row .t b { font-weight: 600; }
+.why-row .t span { display: block; color: var(--text-muted); font-size: 12px; }
+.push { position: relative; height: 8px; background: var(--grid); border-radius: 4px; }
+.push i { position: absolute; top: 0; height: 100%; border-radius: 4px; }
+.push em { position: absolute; left: 50%; top: -2px; width: 1px; height: 12px; background: var(--text-muted); }
+.why-row .e { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plain { font-size: 13px; line-height: 1.5; color: var(--text-secondary); margin: 0; }
+.plain p { margin: 0 0 6px; }
+.plain b { color: var(--text-primary); }
+.plain a { color: var(--text-secondary); }
+#company #chart { height: 230px; }
+#more { margin-top: 14px; font-size: 13px; }
+#more summary { cursor: pointer; color: var(--text-secondary); }
+.calib-row { display: grid; grid-template-columns: 170px 1fr 150px; gap: 12px; align-items: center; padding: 7px 0; border-top: 1px solid var(--grid); font-size: 13px; }
+.calib-row .odds { height: 10px; }
+.calib-row .odds b { position: absolute; top: -3px; width: 3px; height: 16px; margin-left: -1px; background: var(--forecast); border-radius: 2px; }
+.calib-row .r { font-variant-numeric: tabular-nums; }
+#track-view .hero b { font-size: 22px; }
+
+.why-row { grid-template-columns: 1fr 110px 100px; }
+.how span { display: block; padding-left: 26px; position: relative; line-height: 1.45; }
+.how i { position: absolute; left: 0; top: 2px; }
+@media (max-width: 560px) {
+  .why-row { grid-template-columns: 1fr 96px; }
+  .why-row .push { display: none; }
+  .chance { grid-template-columns: 1fr; gap: 10px; }
+  .calib-row { grid-template-columns: 1fr; gap: 4px; }
+  main { padding: 10px; }
+}

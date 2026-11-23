@@ -330,4 +330,5 @@
     if (b.dataset.guess) answer(b.dataset.guess);
   });
   show();
+  window.addEventListener("stocklab-play", show);
 })();

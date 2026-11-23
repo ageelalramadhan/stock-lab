@@ -6,189 +6,103 @@
 <title>Stock Lab</title>
 <link rel="stylesheet" href="style.css">
 </head>
-<body class="playing">
+<body>
 <header class="top">
   <div class="brand">
     <h1>Stock Lab</h1>
-    <span class="muted" id="updated">Loading data...</span>
+    <div class="seg" id="view-seg">
+      <button data-view="cell" class="on">The cell</button>
+      <button data-view="play">Play</button>
+      <button data-view="track">Track record</button>
+    </div>
   </div>
   <div class="top-right">
+    <input id="search" type="search" placeholder="Find a company, e.g. MSFT" autocomplete="off" list="sym-list">
+    <datalist id="sym-list"></datalist>
     <span class="pill" id="live-status"><span class="dot"></span><span id="live-text">Live off</span></span>
-    <button class="btn" id="key-btn">Live data key</button>
+    <button class="btn" id="key-btn">Live prices</button>
   </div>
 </header>
 
-<div class="stats" id="stats"></div>
-
-<main class="layout">
-  <section class="panel left">
-    <div class="panel-head">
-      <div class="seg" id="view-seg">
-        <button data-view="play" class="on">Play</button>
-        <button data-view="map">Living cell</button>
-        <button data-view="paper">Paper portfolio</button>
-        <button data-view="list">Rankings</button>
-        <button data-view="track">Test details</button>
+<main>
+  <section id="cell-view" class="cell-grid">
+    <div class="panel">
+      <h2 id="cell-title">What is likely over the next month</h2>
+      <p class="lead" id="cell-lead"></p>
+      <div id="cell-wrap"><canvas id="cell"></canvas></div>
+      <div class="how">
+        <span><i class="k-out"></i><b>Further out</b> = more likely to be higher in a month</span>
+        <span><i class="k-edge"></i><b>Edge pushed out</b> = that industry leans up. <b>Trembling edge</b> = harder to predict</span>
+        <span><i class="k-ripple"></i><b>Ripple</b> = an unusually big day just happened</span>
       </div>
-      <div class="tools">
-        <input id="search" type="search" placeholder="Find a stock, e.g. MSFT" autocomplete="off" list="sym-list">
-        <datalist id="sym-list"></datalist>
-      </div>
+      <p class="muted small" id="updated"></p>
     </div>
 
-    <div id="play-view"></div>
+    <div class="panel" id="company">
+      <div class="co-head">
+        <div><h2 id="co-name">Click any dot</h2><div class="muted small" id="co-sub"></div></div>
+        <div class="co-price"><span id="co-price" class="big"></span><span id="co-change"></span></div>
+      </div>
 
-    <div id="paper-view" hidden>
-      <div class="track-intro">
-        <h2>If you had followed the brain with pretend money</h2>
-        <p class="note">Every month: split the money equally across the brain's <b>top <span class="bsize"></span></b> stocks, hold for one month, then swap to the new top <span class="bsize"></span>.
-          Compared with simply holding the S&amp;P 500 (SPY) and with the plain momentum rule. A cost of <span id="cost"></span> a month is taken off for trading. No taxes.</p>
-      </div>
-      <div class="hero" id="paper-hero"></div>
-      <div class="legend">
-        <span><i class="sw ln brainc"></i>Brain's top <span class="bsize"></span></span>
-        <span><i class="sw ln spyc"></i>Just holding the S&amp;P 500</span>
-        <span><i class="sw ln momc"></i>Momentum rule's top <span class="bsize"></span></span>
-      </div>
-      <div id="paper-chart"></div>
-      <p class="note" id="paper-caveat"></p>
-      <div class="card wide">
-        <h3>Live pretend portfolio <span class="muted small">(real picks, frozen monthly, no hindsight)</span></h3>
-        <div id="live-paper"></div>
-        <table class="tbl small" id="holdings"><thead><tr>
-          <th>Stock</th><th class="r">Rank</th><th class="r">Bought at</th><th class="r">Now</th><th class="r">Change</th><th class="r">Worth now</th></tr></thead><tbody></tbody></table>
-      </div>
-    </div>
-
-    <div id="map-view" hidden>
-      <div class="story" id="story"></div>
-      <div class="map-tools">
-        <span class="muted small">Color shows</span>
-        <div class="seg" id="color-seg">
-          <button data-color="d1" class="on">The latest day's move</button>
-          <button data-color="rank">Brain's ranking for next month</button>
+      <div class="chance">
+        <div class="chance-num"><b id="ch-num"></b><span>chance it is higher<br>one month from now</span></div>
+        <div class="chance-side">
+          <div class="oddsbar"><i id="ch-fill"></i><em></em></div>
+          <div class="oddsbar-lbl"><span>0%</span><span>50/50</span><span>100%</span></div>
+          <div id="ch-word" class="ch-word"></div>
+          <div id="ch-range" class="muted small"></div>
         </div>
       </div>
-      <div id="map-wrap"><canvas id="map"></canvas></div>
-      <div class="map-legend">
-        <span class="scale"><span id="scale-lo">fell 4%</span><i class="ramp"></i><span id="scale-hi">rose 4%</span></span>
-        <span><i class="ripple"></i>Rippling = an unusually big day for that company</span>
-        <span><i class="coreglow"></i>Glow in the middle = the whole market's day</span>
-        <span><i class="link"></i>Thin line = two companies that move together</span>
-        <span class="muted">Bigger dot = more heavily traded. Click any dot.</span>
-      </div>
-      <div class="card wide">
-        <h3>The biggest moves of the day, and why <span class="muted small">(click one to find it in the cell)</span></h3>
-        <div id="movers"></div>
-      </div>
-    </div>
 
-    <div id="list-view" hidden>
-      <div class="map-tools">
-        <div class="seg" id="scope-seg">
-          <button data-scope="all" class="on">All stocks</button>
-          <button data-scope="t">Tentacles</button>
-        </div>
-        <div class="seg" id="sort-seg">
-          <button data-sort="rank" class="on">Brain rank</button>
-          <button data-sort="mom">Momentum</button>
-          <button data-sort="today">Today</button>
-          <button data-sort="symbol">A to Z</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table class="tbl" id="watch-table">
-          <thead><tr>
-            <th class="r">Rank</th><th>Stock</th><th class="r">Price</th><th class="r">Today</th>
-            <th class="r" title="Brain's expected next-month return compared with the typical stock">vs. market</th>
-            <th class="r" title="Return from 12 months ago to 1 month ago">Momentum</th>
-            <th>Earnings</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
+      <h3>Why</h3>
+      <div id="why"></div>
 
-    <div id="track-view" hidden>
-      <div class="track-intro">
-        <h2>Does the ranking work?</h2>
-        <p class="note">Every month the brain ranks all stocks. The test: did its <b>top 20%</b> beat its <b>bottom 20%</b> over the next month?
-          The line adds up that gap month after month. A line rising steadily means the ranking works. Flat or falling means it doesn't.
-          The momentum line is the classic simple rule (buy last year's winners) for comparison.</p>
-      </div>
-      <div class="legend">
-        <span><i class="sw ln brainc"></i>Brain: top 20% minus bottom 20%, added up</span>
-        <span><i class="sw ln momc"></i>Momentum only, same test</span>
-      </div>
-      <div id="track-chart"></div>
-      <div class="cards" id="track-cards"></div>
-      <div class="card wide">
-        <h3>Live record <span class="muted small">(rankings frozen each month, scored one month later)</span></h3>
-        <table class="tbl small" id="baskets"><thead><tr>
-          <th>Frozen on</th><th class="r">Top <span class="bsize"></span></th><th class="r">Bottom <span class="bsize"></span></th>
-          <th class="r">Gap</th><th class="r">S&amp;P 500 (SPY)</th><th>Result</th></tr></thead><tbody></tbody></table>
-        <p class="note" id="basket-picks"></p>
-      </div>
+      <h3>How far to trust this</h3>
+      <p id="trust" class="plain"></p>
+
+      <h3>What it just did</h3>
+      <div id="explain" class="plain"></div>
+
+      <h3>Price, last 6 months <span class="muted small">(grey dashes: where it usually lands in a month, 8 times out of 10)</span></h3>
+      <div id="chart"></div>
+
+      <details id="more">
+        <summary>Its biggest days in the past year, and why</summary>
+        <div id="moves"></div>
+      </details>
     </div>
   </section>
 
-  <section class="panel main">
-    <div class="panel-head">
-      <div>
-        <h2 id="sel-title">Click any stock</h2>
-        <div class="muted small" id="sel-sub"></div>
-        <div class="price-line"><span id="sel-price" class="big"></span> <span id="sel-change"></span></div>
-      </div>
-      <div class="seg" id="range-seg">
-        <button data-days="21">1M</button>
-        <button data-days="63">3M</button>
-        <button data-days="126" class="on">6M</button>
-        <button data-days="300">1Y</button>
-      </div>
-    </div>
-    <div class="card explain" id="explain"></div>
-    <div class="legend">
-      <span><i class="sw candle"></i>Price (hollow = up day)</span>
-      <span><i class="sw ln ma20"></i>20-day avg</span>
-      <span><i class="sw ln ma50"></i>50-day avg</span>
-      <span><i class="sw ln fc dashed"></i>Brain's tilt vs. market</span>
-      <span><i class="sw ln band dashed"></i>Typical swing (80%)</span>
-    </div>
-    <div id="chart"></div>
-    <div id="tooltip" class="tooltip" hidden></div>
+  <section id="play-view" class="panel" hidden></section>
 
-    <div class="cards">
-      <div class="card"><h3>Brain's call for the next month</h3><div id="call"></div></div>
-      <div class="card"><h3>Why this rank</h3><div id="why"></div></div>
-      <div class="card"><h3>Performance</h3><dl id="perf"></dl></div>
-      <div class="card"><h3>Earnings</h3><div id="earn"></div></div>
-    </div>
-    <div class="card wide">
-      <h3>Biggest moves in the past year, and why <span class="muted small">(numbered on the chart)</span></h3>
-      <div id="drives"></div>
-      <div id="moves"></div>
-    </div>
-    <div class="card wide">
-      <h3>Monthly diary <span class="muted small">(this stock's frozen rank each month, and what happened)</span></h3>
-      <table class="tbl small" id="diary"><thead><tr>
-        <th>Frozen on</th><th class="r">Rank</th><th class="r">Price then</th><th class="r">Month later</th>
-        <th class="r">vs. typical stock</th><th>Result</th></tr></thead><tbody></tbody></table>
+  <section id="track-view" class="panel" hidden>
+    <div class="g-wrap">
+      <h2>Do the percentages come true?</h2>
+      <p class="lead" id="trust-lead"></p>
+      <div id="calib"></div>
+      <p class="note" id="calib-note"></p>
+
+      <h2 style="margin-top:28px">Pretend money test</h2>
+      <p class="lead">A pretend €10,000, split each month across the 20 stocks the model ranks highest, compared with simply holding the whole market.</p>
+      <div class="hero" id="paper-hero"></div>
+      <div class="legend"><span><i class="sw ln brainc"></i>Model's top 20</span><span><i class="sw ln spyc"></i>Just holding the market (S&amp;P 500)</span></div>
+      <div id="paper-chart"></div>
+      <p class="note" id="paper-caveat"></p>
     </div>
   </section>
 </main>
 
-<div id="map-tip" class="tooltip" hidden></div>
+<div id="tip" class="tooltip" hidden></div>
 
 <footer class="foot muted small">
-  Personal learning project by Ageel Alramadhan. Rankings come from patterns in past prices and earnings and are often wrong. Not financial advice.
-  Prices: Finnhub (live), Yahoo Finance via yfinance (daily). Earnings: Finnhub. Universe: S&amp;P 500 list from Wikipedia plus extras.
-  Charts: TradingView Lightweight Charts, d3.
+  Personal learning project by Ageel Alramadhan. Percentages are historical odds from price patterns, not promises, and are often wrong. Not financial advice.
+  Data: Finnhub (live prices, news, earnings), Yahoo Finance via yfinance (daily prices), Wikipedia (S&amp;P 500 list). Charts: TradingView Lightweight Charts, d3.
 </footer>
 
 <dialog id="key-dialog">
   <form method="dialog">
-    <h3>Finnhub API key</h3>
-    <p class="muted small">Optional, for live prices. Get a free key at finnhub.io. It is saved only in this browser on this device, never sent anywhere except Finnhub.</p>
+    <h3>Live prices</h3>
+    <p class="muted small">Optional. Paste a free key from finnhub.io to see prices update during US market hours. It is saved only in this browser.</p>
     <input id="key-input" type="password" autocomplete="off" placeholder="Your Finnhub key">
     <div class="row">
       <button class="btn" value="clear">Remove key</button>
