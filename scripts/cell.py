@@ -234,6 +234,10 @@ def build_panel(frames, sector_of, earnings):
         e = e[e["symbol"].isin(frames.keys())].sort_values("edate")
         if len(e):
             p = p.sort_values("date")
+            p["symbol"] = p["symbol"].astype(object)
+            e["symbol"] = e["symbol"].astype(str).astype(object)
+            p["date"] = pd.to_datetime(p["date"]).astype("datetime64[ns]")
+            e["edate"] = e["edate"].astype("datetime64[ns]")
             p = pd.merge_asof(p.drop(columns=["earn_surprise", "earn_days"]), e[["symbol", "edate", "surprise"]],
                               left_on="date", right_on="edate", by="symbol", direction="backward",
                               tolerance=pd.Timedelta(days=90))
