@@ -393,3 +393,5 @@ b.up, b.down { font-weight: 800; }
 .seg button.on { color: #fff; }
 :root[data-theme="dark"] .seg button.on { color: #0b1220; }
 :root[data-theme="dark"] .btn.primary { color: #0b1220; }
+
+.cell-grid { grid-template-columns: minmax(0, 1.9fr) minmax(340px, 1fr); }

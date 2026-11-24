@@ -72,15 +72,11 @@
   const rOf = (p) => R * (0.2 + 0.68 * Math.max(0, Math.min(1, (p - P_LO) / (P_HI - P_LO))));
 
   function layout() {
-    const box = $("#cell-wrap").getBoundingClientRect();
-    if (!box.width) return;
-    const dpr = window.devicePixelRatio || 1;
-    W = Math.min(box.width, box.height || box.width);
-    canvas.width = box.width * dpr; canvas.height = W * dpr;
-    canvas.style.height = W + "px";
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    CX = box.width / 2; CY = W / 2;
-    const half = Math.min(box.width, W) / 2, LABEL = box.width < 520 ? 50 : 84;
+    const wrap = $("#cell-wrap"), bw = wrap.getBoundingClientRect().width;
+    if (!bw) return;
+    const dpr = window.devicePixelRatio || 1, box = { width: bw };
+    W = bw; CX = bw / 2; CY = bw / 2;      // start square; the height is trimmed to fit at the end
+    const half = bw / 2;
     const place = (r) => {
       R = r;
       const rs = d3.scaleSqrt().domain([0, maxDv]).range([3.5, R * 0.1]);   // area grows with the money traded
@@ -95,11 +91,49 @@
       // the edge of each group sits just outside its outermost bubble
       secs.forEach((s) => { s.edge = 0; });
       nodes.forEach((n) => { n.sec.edge = Math.max(n.sec.edge, Math.hypot(n.x - CX, n.y - CY) + n.rr + 8); });
-      return d3.max(secs, (s) => s.edge) + R * 0.085 + LABEL;   // how far the picture reaches: edge + beat lines + labels
+      // beat lines as they will be drawn: sample points along each one
+      const pts = [];
+      nodes.forEach((n) => {
+        const mv = n.c.d1; if (mv == null) return;
+        const r0 = edgeAt(n.ang, 0) + 4, len = 2 + Math.min(1, Math.abs(mv) / 0.06) * R * 0.085 + 10;   // +10: room for a live flash
+        for (let k = 0; k <= 4; k++) pts.push([CX + Math.cos(n.ang) * (r0 + len * k / 4), CY + Math.sin(n.ang) * (r0 + len * k / 4)]);
+      });
+      let needX = 0, needY = 0;
+      const placed = [];
+      secs.forEach((s) => {
+        s.sub = `${s.ups} of ${s.list.length} went up`;
+        const words = s.name.split(" ");
+        s.lines = words.length > 1 && s.name.length > 13 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [s.name];
+        ctx.font = "700 13px " + FONT;
+        s.lw = Math.max(...s.lines.map((ln) => ctx.measureText(ln).width), ctx.measureText(s.sub).width * 0.93) + 18;
+        s.lh = s.lines.length * 15 + 22;
+        // start just outside the edge and step outward until the box covers nothing
+        let lr = s.edge + 10;
+        for (let i = 0; i < 120; i++, lr += 3) {
+          s.lx = CX + Math.cos(s.mid) * lr; s.ly = CY + Math.sin(s.mid) * lr;
+          const x0 = s.lx - s.lw / 2 - 5, x1 = s.lx + s.lw / 2 + 5, y0 = s.ly - s.lh / 2 - 5, y1 = s.ly + s.lh / 2 + 5;
+          if (!pts.some((q) => q[0] > x0 && q[0] < x1 && q[1] > y0 && q[1] < y1)
+            && !placed.some((o) => x0 < o[1] && x1 > o[0] && y0 < o[3] && y1 > o[2])) break;   // also clear of the other labels
+        }
+        placed.push([s.lx - s.lw / 2, s.lx + s.lw / 2, s.ly - s.lh / 2, s.ly + s.lh / 2]);
+        needX = Math.max(needX, Math.abs(s.lx - CX) + s.lw / 2 + 4);
+        needY = Math.max(needY, Math.abs(s.ly - CY) + s.lh / 2 + 4);
+      });
+      return [needX, needY];   // how far the picture reaches from its middle, labels included
     };
-    // first try, then grow or shrink once so the cell fills the space exactly
-    const reach = place(half * 0.8);
-    place(Math.max(60, half * 0.8 * (half / reach)));
+    // size the cell so that the labels just fit inside the picture
+    // labels keep their size while the cell grows, so the reach is roughly "a x radius + b": measure twice and solve
+    const reach = (r) => Math.max(...place(r));
+    const r1 = half * 0.55, r2 = half * 0.75, n1 = reach(r1), n2 = reach(r2);
+    const a = Math.max(0.5, (n2 - n1) / (r2 - r1)), b = n2 - a * r2;
+    let r = Math.max(60, (half - b) / a);
+    for (let i = 0; i < 4 && reach(r) > half; i++) r *= 0.97;
+    // trim the empty space above and below, then place everything one last time
+    W = Math.min(bw, Math.ceil(place(r)[1] * 2 + 8)); CY = W / 2;
+    wrap.style.aspectRatio = "auto"; wrap.style.height = W + "px";
+    canvas.width = bw * dpr; canvas.height = W * dpr; canvas.style.height = W + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    place(r);
     nodes.sort((a, b) => a.rr - b.rr); // big bubbles drawn last, on top
   }
 
@@ -174,19 +208,14 @@
         ctx.strokeStyle = MUTED; ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]);
         ctx.beginPath(); ctx.moveTo(CX + Math.cos(a) * R * 0.16, CY + Math.sin(a) * R * 0.16); ctx.lineTo(CX + Math.cos(a) * far, CY + Math.sin(a) * far); ctx.stroke();
         ctx.setLineDash([]);
-        const sub = `${s.ups} of ${s.list.length} went up`;
-        const words = s.name.split(" "), lines = words.length > 1 && s.name.length > 13 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [s.name];
-        ctx.font = "700 13px " + FONT; ctx.textAlign = "center";
-        const w = Math.max(...lines.map((ln) => ctx.measureText(ln).width), ctx.measureText(sub).width * 0.9) + 18, h = lines.length * 15 + 22;
-        const lr = s.edge + R * 0.085 + 14 + (Math.abs(Math.cos(s.mid)) * w + Math.abs(Math.sin(s.mid)) * h) / 2;
-        const x = Math.min(CX * 2 - w / 2 - 2, Math.max(w / 2 + 2, CX + Math.cos(s.mid) * lr));
-        const y = Math.min(W - h / 2 - 2, Math.max(h / 2 + 2, CY + Math.sin(s.mid) * lr));
+        const x = s.lx, y = s.ly, w = s.lw, h = s.lh;
+        ctx.textAlign = "center";
         ctx.fillStyle = SURF; ctx.strokeStyle = s.ups * 2 >= s.list.length ? UP : DOWN; ctx.lineWidth = 2;
         ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x - w / 2, y - h / 2, w, h, 10); else ctx.rect(x - w / 2, y - h / 2, w, h); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = INK;
-        lines.forEach((ln, i) => ctx.fillText(ln, x, y - h / 2 + 17 + i * 15));
+        ctx.font = "700 13px " + FONT; ctx.fillStyle = INK;
+        s.lines.forEach((ln, i) => ctx.fillText(ln, x, y - h / 2 + 17 + i * 15));
         ctx.font = "600 12px " + FONT; ctx.fillStyle = SEC;
-        ctx.fillText(sub, x, y + h / 2 - 8);
+        ctx.fillText(s.sub, x, y + h / 2 - 8);
       });
 
       // the companies
