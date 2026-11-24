@@ -61,6 +61,7 @@
     s.ratio = d3.sum(s.list, moneyDay) / usual;   // last day's trading compared with a usual day
     s.word = s.ratio >= 1.15 ? "busier than usual" : s.ratio <= 0.87 ? "quieter than usual" : "a usual day";
     s.ups = s.list.filter((c) => (c.d1 || 0) > 0).length;
+    s.downs = s.list.filter((c) => (c.d1 || 0) < 0).length;
     s.ticks = []; s.pulse = 0; s.dir = 0; s.flip = 0;
   });
   const GAP = 0.035, total = cos.length;
@@ -111,7 +112,8 @@
         s.lw = Math.max(...s.lines.map((ln) => ctx.measureText(ln).width), ctx.measureText(s.sub).width * 0.93) + 18;
         s.liveLine = hasKey();
         if (s.liveLine) s.lw = Math.max(s.lw, ctx.measureText("00 new this minute").width * 0.93 + 18);
-        s.lh = s.lines.length * 15 + 22 + (s.liveLine ? 15 : 0);
+        s.lw = Math.max(s.lw, ctx.measureText(`${s.list.length} of ${s.list.length} went down`).width * 0.93 + 34);
+        s.lh = s.lines.length * 15 + 37 + (s.liveLine ? 15 : 0);
         // start just outside the edge and step outward until the box covers nothing
         let lr = s.edge + 10;
         for (let i = 0; i < 120; i++, lr += 3) {
@@ -231,7 +233,12 @@
         ctx.font = "700 13px " + FONT; ctx.fillStyle = INK;
         s.lines.forEach((ln, i) => ctx.fillText(ln, x, y - h / 2 + 17 + i * 15));
         ctx.font = "600 12px " + FONT; ctx.fillStyle = SEC;
-        ctx.fillText(`${s.ups} of ${s.list.length} went up`, x, y + h / 2 - 8 - (s.liveLine ? 15 : 0));
+        const yb = y + h / 2 - 8 - (s.liveLine ? 15 : 0);
+        [[`${s.ups} of ${s.list.length} went up`, UP, yb - 15], [`${s.downs} of ${s.list.length} went down`, DOWN, yb]].forEach(([txt, col, ty]) => {
+          const tw = ctx.measureText(txt).width;
+          ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x - tw / 2 - 7, ty - 4, 4, 0, Math.PI * 2); ctx.fill();   // a coloured dot in front of each count
+          ctx.fillStyle = SEC; ctx.fillText(txt, x + 4, ty);
+        });
         if (s.liveLine) {
           const k = s.ticks.length;
           ctx.fillStyle = k ? INK : MUTED;
@@ -332,6 +339,8 @@
       const s = hoverSec, by = s.list.slice().sort((a, b) => (dayMove(b) || 0) - (dayMove(a) || 0)), top = by[0], bot = by[by.length - 1];
       tipEl.innerHTML = `<b>${esc(s.name)}</b>
         <div><span>Went up</span><span>${s.ups} of ${s.list.length}</span></div>
+        <div><span>Went down</span><span>${s.downs} of ${s.list.length}</span></div>
+        ${s.list.length - s.ups - s.downs ? `<div><span>Did not move</span><span>${s.list.length - s.ups - s.downs}</span></div>` : ""}
         <div><span>Biggest rise</span><span>${esc(top.s)} ${chip(dayMove(top))}</span></div>
         <div><span>Biggest fall</span><span>${esc(bot.s)} ${chip(dayMove(bot))}</span></div>
         <div><span>Money traded</span><span>${s.word}</span></div>
@@ -660,6 +669,7 @@
     secs.forEach((s) => {
       while (s.ticks.length && s.ticks[0] < cut) s.ticks.shift();
       const ups = s.list.filter((c) => (dayMove(c) || 0) > 0).length;
+      s.downs = s.list.filter((c) => (dayMove(c) || 0) < 0).length;
       if ((ups * 2 >= s.list.length) !== (s.ups * 2 >= s.list.length)) s.flip = performance.now();   // the group just switched between mostly up and mostly down
       s.ups = ups;
     });
