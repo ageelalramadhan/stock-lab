@@ -59,6 +59,7 @@
     const usual = d3.sum(s.list, (c) => c.dv) || 1;
     s.ratio = d3.sum(s.list, moneyDay) / usual;   // last day's trading compared with a usual day
     s.word = s.ratio >= 1.15 ? "busier than usual" : s.ratio <= 0.87 ? "quieter than usual" : "a usual day";
+    s.ups = s.list.filter((c) => (c.d1 || 0) > 0).length;
   });
   const GAP = 0.035, total = cos.length;
   let a0 = -Math.PI / 2;
@@ -77,7 +78,7 @@
     canvas.width = box.width * dpr; canvas.height = W * dpr;
     canvas.style.height = W + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    CX = box.width / 2; CY = W / 2; R = (Math.min(box.width, W) / 2 - (box.width < 520 ? 46 : 64)) / 0.97;
+    CX = box.width / 2; CY = W / 2; R = (Math.min(box.width, W) / 2 - (box.width < 520 ? 46 : 64)) / 1.17;
     const rs = d3.scaleSqrt().domain([0, maxDv]).range([3.5, R * 0.1]);   // area grows with the money traded
     nodes.forEach((n) => {
       n.rr = rs(moneyDay(n.c));
@@ -111,7 +112,7 @@
   const t0 = performance.now();
   function draw(now) {
     if (!$("#cell-view").hidden && R > 0) {
-      const t = (now - t0) / 1000;
+      const open = marketOpen(), t = open ? (now - t0) / 1000 : 0;   // nothing moves while the market is closed
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       // the cell's body and its moving edge
@@ -121,10 +122,29 @@
         if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
       }
       ctx.closePath();
-      const g = ctx.createRadialGradient(CX, CY, R * 0.1, CX, CY, R);
-      g.addColorStop(0, "#fdf3d7"); g.addColorStop(1, "#f3f8ff");
-      ctx.fillStyle = g; ctx.fill();
-      ctx.strokeStyle = "#8fb3ee"; ctx.lineWidth = 5; ctx.lineJoin = "round"; ctx.stroke();
+      ctx.fillStyle = "#ffffff"; ctx.fill();
+
+      // the edge: green where most of that group went up, red where most went down
+      secs.forEach((s) => {
+        ctx.beginPath();
+        for (let a = s.a0 - GAP / 2, i = 0; a <= s.a1 + GAP / 2 + 0.001; a += 0.02, i++) {
+          const r = edgeAt(a, t), x = CX + Math.cos(a) * r, y = CY + Math.sin(a) * r;
+          if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+        }
+        ctx.strokeStyle = s.ups * 2 >= s.list.length ? UP : DOWN; ctx.lineWidth = 5; ctx.lineCap = "butt"; ctx.lineJoin = "round"; ctx.stroke();
+      });
+
+      // the beat: one line for every company, standing on the edge. Longer line = bigger move on the last day.
+      const lw = Math.max(1.6, (Math.PI * 2 * R / total) * 0.62);
+      nodes.forEach((n) => {
+        const mv = dayMove(n.c), l = live[n.c.s];
+        if (mv == null) return;
+        const flash = l && l.pulse ? Math.max(0, 1 - (now - l.pulse) / 900) : 0;
+        const r0 = edgeAt(n.ang, t) + 4, len = 2 + Math.min(1, Math.abs(mv) / 0.06) * R * 0.085 + flash * 8;
+        ctx.strokeStyle = flash > 0 && l.dir ? (l.dir > 0 ? UP : DOWN) : dayCol(mv); ctx.lineWidth = lw; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(CX + Math.cos(n.ang) * r0, CY + Math.sin(n.ang) * r0);
+        ctx.lineTo(CX + Math.cos(n.ang) * (r0 + len), CY + Math.sin(n.ang) * (r0 + len)); ctx.stroke();
+      });
 
       // rings: the same chance all the way round
       const ringLabels = [];
@@ -132,7 +152,7 @@
       for (let v = Math.ceil(P_LO * 20) / 20; v <= P_HI + 1e-9; v += 0.05) {
         const rr = rOf(v), half = Math.abs(v - 0.5) < 0.001;
         ctx.setLineDash(half ? [] : [4, 6]);
-        ctx.strokeStyle = half ? "#9aa0a8" : "#d9d0bd"; ctx.lineWidth = half ? 2 : 1.2;
+        ctx.strokeStyle = half ? "#9aa0a8" : "#e4e0d6"; ctx.lineWidth = half ? 2 : 1.2;
         ctx.beginPath(); ctx.arc(CX, CY, rr, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
         ringLabels.push([rr, half, half ? "coin flip: 50 out of 100" : n100(v) + " out of 100"]);
@@ -143,15 +163,15 @@
         const a = s.a0 - GAP / 2;
         ctx.strokeStyle = "#e3dccb"; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.moveTo(CX + Math.cos(a) * R * 0.16, CY + Math.sin(a) * R * 0.16); ctx.lineTo(CX + Math.cos(a) * R * 0.95, CY + Math.sin(a) * R * 0.95); ctx.stroke();
-        const lr = s.edge + 30, x = CX + Math.cos(s.mid) * lr, y = CY + Math.sin(s.mid) * lr;
+        const lr = s.edge + R * 0.085 + 46, x = CX + Math.cos(s.mid) * lr, y = CY + Math.sin(s.mid) * lr;
         const words = s.name.split(" "), lines = words.length > 1 && s.name.length > 13 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [s.name];
         ctx.font = "700 12px " + FONT; ctx.textAlign = "center";
-        const half = Math.max(...lines.concat([s.word]).map((ln) => ctx.measureText(ln).width)) / 2 + 6;
+        const half = Math.max(...lines.concat([`${s.ups} of ${s.list.length} went up`]).map((ln) => ctx.measureText(ln).width)) / 2 + 6;
         const xx = Math.min(CX * 2 - half, Math.max(half, x)), y0 = y - (lines.length - 1) * 7 + 4;
         ctx.fillStyle = INK;
         lines.forEach((ln, i) => ctx.fillText(ln, xx, y0 + i * 14 - 7));
         ctx.font = "600 11px " + FONT; ctx.fillStyle = "#5d626b";
-        ctx.fillText(s.word, xx, y0 + lines.length * 14 - 7);
+        ctx.fillText(`${s.ups} of ${s.list.length} went up`, xx, y0 + lines.length * 14 - 7);
       });
 
       // the companies
@@ -163,10 +183,10 @@
         const blink = 1;
         const flash = l && l.pulse ? Math.max(0, 1 - (now - l.pulse) / 900) : 0;
         const ringCol = flash > 0 && l.dir ? (l.dir > 0 ? UP : DOWN) : col;
-        const ringW = Math.max(1.5, n.rr * 0.2) + flash * 3;
+        const ringW = Math.max(2, n.rr * 0.24) + flash * 3;
 
         if (Math.abs(c.tz || 0) >= 2.5) { // waves: an unusually big day
-          const ph = (((t * 0.3 + n.ph) % 1) + 1) % 1;
+          const ph = open ? (((t * 0.3 + n.ph) % 1) + 1) % 1 : 0.35;
           ctx.globalAlpha = (1 - ph) * 0.7; ctx.strokeStyle = col; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.arc(n.x, n.y, n.rr + 3 + ph * 14, 0, Math.PI * 2); ctx.stroke();
           ctx.globalAlpha = 1;
@@ -183,7 +203,7 @@
           ctx.fillStyle = INK; ctx.font = `700 ${Math.max(7, Math.min(12, n.rr * 0.62))}px ${FONT}`; ctx.textAlign = "center";
           ctx.fillText(c.s.slice(0, 4), n.x, n.y + n.rr * 0.22);
         } else {
-          ctx.globalAlpha = 0.3 + 0.35 * blink; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(n.x, n.y, n.rr, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+          ctx.fillStyle = col; ctx.beginPath(); ctx.arc(n.x, n.y, n.rr, 0, Math.PI * 2); ctx.fill();
         }
         ctx.globalAlpha = Math.min(1, blink + flash); ctx.strokeStyle = ringCol; ctx.lineWidth = ringW;
         ctx.beginPath(); ctx.arc(n.x, n.y, n.rr - ringW / 2 + 0.5, 0, Math.PI * 2); ctx.stroke();
