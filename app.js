@@ -53,6 +53,13 @@
     name, list: list.slice().sort((a, b) => a.s.localeCompare(b.s)),
     p: d3.mean(list, (c) => c.p), vp: d3.mean(list, (c) => c.vp ?? 0.5),
   })).sort((a, b) => a.name.localeCompare(b.name));
+  const avgDv = d3.mean(cos, (c) => c.dv) || 1, avgMv = d3.mean(cos, (c) => Math.abs(c.d1 || 0)) || 0.01;
+  secs.forEach((s) => {
+    const money = d3.mean(s.list, (c) => c.dv) / avgDv, moving = d3.mean(s.list, (c) => Math.abs(c.d1 || 0)) / avgMv;
+    s.busy = Math.max(0.4, Math.min(2.2, 0.5 * Math.sqrt(money) + 0.5 * moving));   // 1 = a normal group
+    s.f = 0.86 + 0.28 * (s.busy - 0.4) / 1.8;                                        // how far its edge reaches
+    s.word = s.busy >= 1.35 ? "very busy" : s.busy >= 1.08 ? "busy" : s.busy >= 0.85 ? "normal" : "quiet";
+  });
   const GAP = 0.035, total = cos.length;
   let a0 = -Math.PI / 2;
   secs.forEach((s) => { s.a0 = a0; s.a1 = a0 + (s.list.length / total) * (Math.PI * 2 - GAP * secs.length); s.mid = (s.a0 + s.a1) / 2; a0 = s.a1 + GAP; });
@@ -70,10 +77,10 @@
     canvas.width = box.width * dpr; canvas.height = W * dpr;
     canvas.style.height = W + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    CX = box.width / 2; CY = W / 2; R = Math.min(box.width, W) / 2 - (box.width < 520 ? 46 : 64);
+    CX = box.width / 2; CY = W / 2; R = (Math.min(box.width, W) / 2 - (box.width < 520 ? 46 : 64)) / 1.13;
     const rs = d3.scaleSqrt().domain([0, maxDv]).range([R * 0.011 + 2, R * 0.062 + 3]);
     nodes.forEach((n) => {
-      n.rr = rs(n.c.dv);
+      n.rr = rs(n.c.dv) * (1 + Math.min(4, Math.abs(n.c.tz || 0)) * 0.13);
       n.tx = CX + Math.cos(n.ang) * rOf(n.c.p); n.ty = CY + Math.sin(n.ang) * rOf(n.c.p);
       n.x = n.tx; n.y = n.ty;
     });
@@ -92,10 +99,9 @@
     if (k < 0) m0 -= Math.PI * 2;
     if (k === secs.length - 1) m1 += Math.PI * 2;
     const u = (1 - Math.cos(Math.PI * Math.max(0, Math.min(1, (a - m0) / (m1 - m0))))) / 2;
-    const p = s0.p + (s1.p - s0.p) * u, vp = s0.vp + (s1.vp - s0.vp) * u;
-    const bulge = Math.max(-1, Math.min(1, (p - P_MID) / (span * 0.6))) * R * 0.06;
-    const amp = R * (0.004 + 0.018 * vp);
-    return R + bulge + amp * (Math.sin(a * 9 + t * (0.8 + vp)) * 0.6 + Math.sin(a * 17 - t * (1.3 + vp)) * 0.4);
+    const f = s0.f + (s1.f - s0.f) * u, busy = s0.busy + (s1.busy - s0.busy) * u;
+    const amp = R * 0.006 * (0.5 + busy);   // busy groups also wobble more
+    return R * f + amp * (Math.sin(a * 9 + t * (0.6 + busy)) * 0.6 + Math.sin(a * 17 - t * (1 + busy)) * 0.4);
   }
 
   const FONT = 'ui-rounded, "SF Pro Rounded", "Nunito", "Segoe UI", system-ui, sans-serif';
@@ -135,13 +141,15 @@
         const a = s.a0 - GAP / 2;
         ctx.strokeStyle = "#e3dccb"; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.moveTo(CX + Math.cos(a) * R * 0.16, CY + Math.sin(a) * R * 0.16); ctx.lineTo(CX + Math.cos(a) * R * 0.95, CY + Math.sin(a) * R * 0.95); ctx.stroke();
-        const lr = R + 32, x = CX + Math.cos(s.mid) * lr, y = CY + Math.sin(s.mid) * lr;
+        const lr = R * s.f + 34, x = CX + Math.cos(s.mid) * lr, y = CY + Math.sin(s.mid) * lr;
         const words = s.name.split(" "), lines = words.length > 1 && s.name.length > 13 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [s.name];
         ctx.font = "700 12px " + FONT; ctx.textAlign = "center";
         const half = Math.max(...lines.map((ln) => ctx.measureText(ln).width)) / 2 + 4;
         const xx = Math.min(CX * 2 - half, Math.max(half, x)), y0 = y - (lines.length - 1) * 7 + 4;
         ctx.fillStyle = INK;
-        lines.forEach((ln, i) => ctx.fillText(ln, xx, y0 + i * 14));
+        lines.forEach((ln, i) => ctx.fillText(ln, xx, y0 + i * 14 - 7));
+        ctx.font = "600 11px " + FONT; ctx.fillStyle = "#5d626b";
+        ctx.fillText(s.word, xx, y0 + lines.length * 14 - 7);
       });
 
       // the companies

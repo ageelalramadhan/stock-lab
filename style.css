@@ -352,3 +352,5 @@ dialog::backdrop { background: rgba(32,36,42,0.4); }
 #more { font-size: 15px; }
 .tip-row { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; }
 .tip-row img { width: 34px; height: 34px; border-radius: 50%; background: #fff; border: 1px solid var(--border); object-fit: contain; }
+
+.k-edge2 { border: 4px solid #8fb3ee; border-radius: 46% 54% 60% 40% / 50% 42% 58% 50% !important; }
