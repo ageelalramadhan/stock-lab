@@ -184,9 +184,16 @@
         if (mv == null) return;
         const flash = l && l.pulse ? Math.max(0, 1 - (now - l.pulse) / 900) : 0;
         const r0 = edgeAt(n.ang, t) + 4, len = 2 + Math.min(1, Math.abs(mv) / 0.06) * R * 0.085 + flash * 8;
-        ctx.strokeStyle = flash > 0 && l.dir ? (l.dir > 0 ? UP : DOWN) : dayCol(mv); ctx.lineWidth = lw; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(CX + Math.cos(n.ang) * r0, CY + Math.sin(n.ang) * r0);
-        ctx.lineTo(CX + Math.cos(n.ang) * (r0 + len), CY + Math.sin(n.ang) * (r0 + len)); ctx.stroke();
+        n.l0 = r0; n.l1 = r0 + len;   // remembered so the line can be hovered and clicked
+        const cos = Math.cos(n.ang), sin = Math.sin(n.ang), mine = n === hover || n.c.s === selected;
+        ctx.lineCap = "round";
+        if (mine) { // a dark outline so you can see which line belongs to the chosen company
+          ctx.strokeStyle = INK; ctx.lineWidth = lw + 5;
+          ctx.beginPath(); ctx.moveTo(CX + cos * r0, CY + sin * r0); ctx.lineTo(CX + cos * (r0 + len + 3), CY + sin * (r0 + len + 3)); ctx.stroke();
+        }
+        ctx.strokeStyle = flash > 0 && l.dir ? (l.dir > 0 ? UP : DOWN) : dayCol(mv); ctx.lineWidth = mine ? lw + 1.5 : lw;
+        ctx.beginPath(); ctx.moveTo(CX + cos * r0, CY + sin * r0);
+        ctx.lineTo(CX + cos * (r0 + len + (mine ? 3 : 0)), CY + sin * (r0 + len + (mine ? 3 : 0))); ctx.stroke();
       });
 
       // rings: the same chance all the way round
@@ -289,6 +296,15 @@
     const b = canvas.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
     let best = null, bd = 1e9;
     nodes.forEach((n) => { const d = Math.hypot(n.x - x, n.y - y); if (d < Math.max(n.rr + 3, 9) && d - n.rr < bd) { best = n; bd = d - n.rr; } });
+    if (best) return best;
+    // a line on the edge: the pointer must be at that line's distance from the middle, and nearest to its direction
+    const pr = Math.hypot(x - CX, y - CY), pa = Math.atan2(y - CY, x - CX);
+    let da = 1e9;
+    nodes.forEach((n) => {
+      if (n.l0 == null || pr < n.l0 - 5 || pr > n.l1 + 9) return;
+      let d = Math.abs(pa - n.ang) % (Math.PI * 2); if (d > Math.PI) d = Math.PI * 2 - d;
+      if (d * pr < 7 && d < da) { best = n; da = d; }   // within about 7 pixels sideways
+    });
     return best;
   }
   const tipEl = $("#tip");
