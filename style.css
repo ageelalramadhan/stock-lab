@@ -367,3 +367,7 @@ b.up, b.down { font-weight: 800; }
 .cell-grid { grid-template-columns: minmax(0, 1.5fr) minmax(340px, 1fr); }
 @media (max-width: 1200px) { .cell-grid { grid-template-columns: 1fr; } }
 #cell-wrap { max-height: none; }
+
+.newslist { margin: 4px 0 8px; } .newslist summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.newslist ol { margin: 8px 0; padding-left: 22px; } .newslist li { margin-bottom: 6px; line-height: 1.4; }
+.move .why p { margin: 4px 0; }

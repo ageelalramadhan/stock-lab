@@ -635,44 +635,74 @@ def find_moves(frames, sector_of, earnings, days=300):
     return out
 
 
-def attach_news(moves, priority):
-    """Look up a headline for company-specific and earnings moves (Finnhub, cached, a few hundred per night)."""
+STOP = set("""the a an and or of to in on for with from by at as is are was were be been its it this that after before
+over under into than then says said say will would could should may might has have had not new stock stocks shares share
+company inc corp what why how here amid about just more most year week today monday tuesday wednesday thursday friday""".split())
+
+
+def rank_headlines(items, sym, name):
+    """Order a day's headlines so the most reported story comes first: a headline scores higher when its
+    words appear in many of that day's other headlines. No guessing about what moved the price."""
+    own = {w for w in "".join(ch.lower() if ch.isalnum() else " " for ch in f"{sym} {name}").split()}
+    seen, rows = set(), []
+    for it in items:
+        h = (it.get("headline") or "").strip()
+        k = "".join(ch.lower() for ch in h if ch.isalnum())[:60]
+        if not h or k in seen:
+            continue
+        seen.add(k)
+        words = {w for w in "".join(ch.lower() if ch.isalnum() else " " for ch in h).split()
+                 if len(w) > 3 and w not in STOP and w not in own}
+        rows.append((h, it, words))
+    freq = {}
+    for _, _, words in rows:
+        for w in words:
+            freq[w] = freq.get(w, 0) + 1
+    scored = []
+    for h, it, words in rows:
+        score = sum(freq[w] - 1 for w in words) / (len(words) ** 0.5 or 1)
+        if any(w in h.lower() for w in own if len(w) > 2):
+            score *= 1.5          # the headline names this company
+        scored.append((score, it.get("datetime", 0), h, it))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [{"headline": h[:170], "source": it.get("source", ""), "url": it.get("url", "")} for _, _, h, it in scored], len(rows)
+
+
+def attach_news(moves, priority, names):
+    """For each big move, collect the news from that day (Finnhub, remembered between runs).
+    Window: from the previous close to the close of the day the price moved."""
     cache = json.loads(NEWS_CACHE.read_text()) if NEWS_CACHE.exists() else {}
     key = os.environ.get("FINNHUB_KEY", "")
     todo = []
     for s, m in moves.items():
         for mv in m["top"]:
-            k = f"{s}|{mv['date']}"
-            if mv["cause"] in ("company", "earnings") and k not in cache:
-                todo.append((0 if s in priority else 1, -abs(mv["ret"]), s, mv["date"]))
+            c = cache.get(f"{s}|{mv['date']}")
+            if mv["cause"] in ("company", "earnings") and not (isinstance(c, dict) and "items" in c):
+                todo.append((0 if s in priority else 1, -pd.Timestamp(mv["date"]).toordinal(), -abs(mv["ret"]), s, mv["date"]))
     todo.sort()
     fetched = 0
     if key and not DEMO:
-        for _, _, s, d in todo[:NEWS_PER_RUN]:
+        for _, _, _, s, d in todo[:NEWS_PER_RUN]:
             day = pd.Timestamp(d)
+            prev = day - timedelta(days=3 if day.weekday() == 0 else 1)   # Monday: include the weekend
             url = (f"https://finnhub.io/api/v1/company-news?symbol={s.replace('-', '.')}"
-                   f"&from={(day - timedelta(days=1)).date()}&to={day.date()}&token={key}")
+                   f"&from={prev.date()}&to={day.date()}&token={key}")
             try:
-                items = json.loads(urllib.request.urlopen(url, timeout=20).read())
+                items = json.loads(urllib.request.urlopen(url, timeout=20).read()) or []
             except Exception:
                 time.sleep(1.1)
                 continue
-            pick = None
-            for it in sorted(items or [], key=lambda x: x.get("datetime", 0)):
-                h = it.get("headline", "")
-                if h and (s in h or s.split("-")[0] in it.get("related", "")):
-                    pick = it
-                    break
-            pick = pick or (items[0] if items else None)
-            cache[f"{s}|{d}"] = ({"headline": pick.get("headline", "")[:160], "source": pick.get("source", ""),
-                                  "url": pick.get("url", "")} if pick else None)
+            lo, hi = (prev + timedelta(hours=20)).timestamp(), (day + timedelta(hours=21, minutes=30)).timestamp()
+            ranked, n = rank_headlines([it for it in items if lo <= it.get("datetime", 0) <= hi], s, names.get(s, ""))
+            cache[f"{s}|{d}"] = {"n": n, "items": ranked[:8]}
             fetched += 1
             time.sleep(1.1)  # stay under 60 calls a minute
         NEWS_CACHE.write_text(json.dumps(cache, separators=(",", ":")))
     for s, m in moves.items():
         for mv in m["top"]:
-            mv["news"] = cache.get(f"{s}|{mv['date']}")
-    print(f"News: {fetched} headlines fetched this run, {len(todo) - fetched} still to look up")
+            c = cache.get(f"{s}|{mv['date']}")
+            mv["news"] = c if isinstance(c, dict) and "items" in c else ({"n": 1, "items": [c]} if c else None)
+    print(f"News: {fetched} days of news fetched this run, {len(todo) - fetched} still to look up")
 
 
 # ---------------- live record ----------------
@@ -836,10 +866,11 @@ def main():
 
     earn = earnings if earnings is not None else pd.DataFrame()
     moves = find_moves(frames, {s: meta[s]["sector"] for s in frames}, earn)
-    attach_news(moves, tent)
+    names = {k: v["name"] for k, v in meta.items()}
+    attach_news(moves, tent, names)
     tday = today_summary(frames, {s: meta[s]["sector"] for s in frames})
     tnews = {s: {"top": [{"date": tday["date"], "ret": tday["per"][s]["ret"], "cause": "company"}]} for s in tday["movers"]}
-    attach_news(tnews, set(tday["movers"]))
+    attach_news(tnews, set(tday["movers"]), names)
     per = tday.pop("per")
     tday["movers"] = [{"s": s, "n": meta[s]["name"], "sec": meta[s]["sector"], "ret": r(per[s]["ret"]), "z": r(per[s]["z"], 1),
                        "cause": per[s]["cause"], "sector": r(per[s]["sector"]), "vx": r(per[s]["vx"], 1),

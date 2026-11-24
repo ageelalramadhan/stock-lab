@@ -347,11 +347,23 @@
     quiet: ["A normal-sized move.", "It was no bigger than this company's usual daily move."],
     earnings: ["It reported how much money it made.", "This company published its results on that day."],
   };
+  // the news from the day of a move: the most reported story first, then the full list so readers can judge for themselves
+  function newsHtml(news) {
+    if (!news || !news.items) return "";
+    const items = news.items.filter((x) => x && x.headline);
+    if (!items.length) return '<p class="muted small">We found no news for that day.</p>';
+    const link = (x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.headline)}</a> <span class="muted">(${esc(x.source)})</span>`;
+    const more = items.length > 1 ? `<details class="newslist"><summary>See the news from that day (${items.length}${news.n > items.length ? " of " + news.n : ""})</summary>
+      <ol>${items.map((x) => `<li>${link(x)}</li>`).join("")}</ol>
+      <p class="muted small">Ordered by how many headlines told the same story. We cannot know for sure which one moved the price, so read them and decide.</p></details>` : "";
+    return `<p>${items.length > 1 ? "Most reported that day: " : "In the news that day: "}${link(items[0])}</p>${more}`;
+  }
+
   function renderExplain(c) {
     if (c.d1 == null || !c.tc) { $("#explain").innerHTML = "<p>No news yet.</p>"; return; }
     const ct = CAUSE[c.tc] || CAUSE.quiet;
     const mv = (TD.movers || []).find((m) => m.s === c.s);
-    const news = mv && mv.news && mv.news.headline ? `<p>In the news that day: <a href="${esc(mv.news.url)}" target="_blank" rel="noopener">${esc(mv.news.headline)}</a> (${esc(mv.news.source)})</p>` : "";
+    const news = mv ? newsHtml(mv.news) : "";
     const l = live[c.s];
     const now = l && l.price && l.prevClose ? `<p>Right now: ${chip(l.price / l.prevClose - 1)} today.</p>` : "";
     $("#explain").innerHTML = `<p>On ${dayName(TD.date)} its price <b>${went(c.d1, 1)}</b>. All companies together ${went(TD.market, 1)}.</p>
@@ -403,8 +415,7 @@
     chart.timeScale().fitContent();
     $("#moves").innerHTML = mv.length ? mv.map((m, i) => {
       const ct = CAUSE[m.cause] || CAUSE.company;
-      const news = m.news && m.news.headline ? `<br>In the news: <a href="${esc(m.news.url)}" target="_blank" rel="noopener">${esc(m.news.headline)}</a> (${esc(m.news.source)})` : "";
-      return `<div class="move"><span class="num">${i + 1}</span><span>${m.date}</span><span>${chip(m.ret)}</span><span class="why"><b>${ct[0]}</b>${news}</span></div>`;
+      return `<div class="move"><span class="num">${i + 1}</span><span>${m.date}</span><span>${chip(m.ret)}</span><span class="why"><b>${ct[0]}</b>${newsHtml(m.news)}</span></div>`;
     }).join("") : '<p class="plain">No very big days this year.</p>';
   }
 
