@@ -104,7 +104,7 @@
     if (k === secs.length - 1) m1 += Math.PI * 2;
     const u = (1 - Math.cos(Math.PI * Math.max(0, Math.min(1, (a - m0) / (m1 - m0))))) / 2;
     const edge = s0.edge + (s1.edge - s0.edge) * u;
-    return edge + R * 0.006 * (Math.sin(a * 9 + t) * 0.6 + Math.sin(a * 17 - t * 1.4) * 0.4);   // a small, even ripple so it looks alive; it carries no meaning
+    return edge;   // drawn exactly where the data puts it, with no decorative motion
   }
 
   const FONT = 'ui-rounded, "SF Pro Rounded", "Nunito", "Segoe UI", system-ui, sans-serif';
@@ -186,7 +186,7 @@
         const ringW = Math.max(2, n.rr * 0.24) + flash * 3;
 
         if (Math.abs(c.tz || 0) >= 2.5) { // waves: an unusually big day
-          const ph = open ? (((t * 0.3 + n.ph) % 1) + 1) % 1 : 0.35;
+          const ph = 0.35;   // a still ring: it marks a fact (a very big day), so it does not animate
           ctx.globalAlpha = (1 - ph) * 0.7; ctx.strokeStyle = col; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.arc(n.x, n.y, n.rr + 3 + ph * 14, 0, Math.PI * 2); ctx.stroke();
           ctx.globalAlpha = 1;
@@ -270,11 +270,14 @@
     $("#updated").textContent = `Updated ${CELL.generated}. Prices up to ${CELL.data_through}. It updates itself every weekday night.`;
   })();
 
-  // is the New York stock exchange open right now? (Monday to Friday, 9:30 to 16:00 New York time; holidays not counted)
+  // is the New York stock exchange open right now? (Monday to Friday, 9:30 to 16:00 New York time, except holidays)
+  // days the New York Stock Exchange is closed (2026 and 2027)
+  const HOLIDAYS = ["2026-11-26", "2026-12-25", "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"];
   function marketOpen() {
     const ny = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
     const mins = ny.getHours() * 60 + ny.getMinutes();
-    return ny.getDay() >= 1 && ny.getDay() <= 5 && mins >= 570 && mins < 960;
+    const day = ny.getFullYear() + "-" + String(ny.getMonth() + 1).padStart(2, "0") + "-" + String(ny.getDate()).padStart(2, "0");
+    return ny.getDay() >= 1 && ny.getDay() <= 5 && mins >= 570 && mins < 960 && !HOLIDAYS.includes(day);
   }
   function marketNote() {
     const open = marketOpen(), key = !!getKey();
@@ -324,11 +327,11 @@
   }
 
   const CAUSE = {
-    company: ["News about this company.", "Other companies did not move like this, so something happened to this one."],
-    sector: ["Its whole group moved.", "Companies that make similar things all moved the same way."],
-    market: ["Almost every company moved.", "This was not about this company. The whole market moved."],
-    quiet: ["Nothing special.", "A small move like this happens all the time and means nothing."],
-    earnings: ["It told everyone how much money it made.", "Companies do this four times a year, and prices often jump after."],
+    company: ["Probably news about this company.", "The other companies did not move like this. That is our reading of the numbers, not a known fact."],
+    sector: ["Probably its whole group.", "Companies that make similar things moved the same way that day."],
+    market: ["Probably the whole market.", "Most companies moved the same way that day, so it was likely not about this one."],
+    quiet: ["A normal-sized move.", "It was no bigger than this company's usual daily move."],
+    earnings: ["It reported how much money it made.", "This company published its results on that day."],
   };
   function renderExplain(c) {
     if (c.d1 == null || !c.tc) { $("#explain").innerHTML = "<p>No news yet.</p>"; return; }
