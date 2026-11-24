@@ -53,17 +53,17 @@
     name, list: list.slice().sort((a, b) => a.s.localeCompare(b.s)),
     p: d3.mean(list, (c) => c.p), vp: d3.mean(list, (c) => c.vp ?? 0.5),
   })).sort((a, b) => a.name.localeCompare(b.name));
-  const avgDv = d3.mean(cos, (c) => c.dv) || 1, avgMv = d3.mean(cos, (c) => Math.abs(c.d1 || 0)) || 0.01;
+  // Facts only. A bubble's size is the money that changed hands in that company on the last day.
+  const moneyDay = (c) => c.dv * (c.tvx || 1);
   secs.forEach((s) => {
-    const money = d3.mean(s.list, (c) => c.dv) / avgDv, moving = d3.mean(s.list, (c) => Math.abs(c.d1 || 0)) / avgMv;
-    s.busy = Math.max(0.4, Math.min(2.2, 0.5 * Math.sqrt(money) + 0.5 * moving));   // 1 = a normal group
-    s.f = 0.86 + 0.28 * (s.busy - 0.4) / 1.8;                                        // how far its edge reaches
-    s.word = s.busy >= 1.35 ? "very busy" : s.busy >= 1.08 ? "busy" : s.busy >= 0.85 ? "normal" : "quiet";
+    const usual = d3.sum(s.list, (c) => c.dv) || 1;
+    s.ratio = d3.sum(s.list, moneyDay) / usual;   // last day's trading compared with a usual day
+    s.word = s.ratio >= 1.15 ? "busier than usual" : s.ratio <= 0.87 ? "quieter than usual" : "a usual day";
   });
   const GAP = 0.035, total = cos.length;
   let a0 = -Math.PI / 2;
   secs.forEach((s) => { s.a0 = a0; s.a1 = a0 + (s.list.length / total) * (Math.PI * 2 - GAP * secs.length); s.mid = (s.a0 + s.a1) / 2; a0 = s.a1 + GAP; });
-  const maxDv = d3.max(cos, (c) => c.dv) || 1;
+  const maxDv = d3.max(cos, moneyDay) || 1;
   const nodes = [];
   secs.forEach((s) => s.list.forEach((c, i) => nodes.push({ c, sec: s, ang: s.a0 + ((i + 0.5) / s.list.length) * (s.a1 - s.a0), rr: 0, ph: Math.random() * 6.28 })));
   const nodeOf = Object.fromEntries(nodes.map((n) => [n.c.s, n]));
@@ -77,18 +77,18 @@
     canvas.width = box.width * dpr; canvas.height = W * dpr;
     canvas.style.height = W + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    CX = box.width / 2; CY = W / 2; R = (Math.min(box.width, W) / 2 - (box.width < 520 ? 46 : 64)) / 1.2;
-    const rs = d3.scaleSqrt().domain([0, maxDv]).range([R * 0.011 + 2, R * 0.062 + 3]);
+    CX = box.width / 2; CY = W / 2; R = (Math.min(box.width, W) / 2 - (box.width < 520 ? 46 : 64)) / 0.97;
+    const rs = d3.scaleSqrt().domain([0, maxDv]).range([3.5, R * 0.1]);   // area grows with the money traded
     nodes.forEach((n) => {
-      n.rr = rs(n.c.dv) * (1 + Math.min(4, Math.abs(n.c.tz || 0)) * 0.13);
+      n.rr = rs(moneyDay(n.c));
       n.tx = CX + Math.cos(n.ang) * rOf(n.c.p); n.ty = CY + Math.sin(n.ang) * rOf(n.c.p);
       n.x = n.tx; n.y = n.ty;
     });
     const sim = d3.forceSimulation(nodes).force("x", d3.forceX((n) => n.tx).strength(0.3)).force("y", d3.forceY((n) => n.ty).strength(0.3))
       .force("hit", d3.forceCollide((n) => n.rr + 1.5).iterations(2)).stop();
     for (let i = 0; i < 200; i++) sim.tick();
-    // the edge of each group reaches at least as far as its outermost bubble, so busy groups push it out
-    secs.forEach((s) => { s.edge = R * s.f; });
+    // the edge of each group sits just outside its outermost bubble
+    secs.forEach((s) => { s.edge = 0; });   // no formula: the edge only wraps the bubbles
     nodes.forEach((n) => { n.sec.edge = Math.max(n.sec.edge, Math.hypot(n.x - CX, n.y - CY) + n.rr + 8); });
     nodes.sort((a, b) => a.rr - b.rr); // big bubbles drawn last, on top
   }
@@ -102,9 +102,8 @@
     if (k < 0) m0 -= Math.PI * 2;
     if (k === secs.length - 1) m1 += Math.PI * 2;
     const u = (1 - Math.cos(Math.PI * Math.max(0, Math.min(1, (a - m0) / (m1 - m0))))) / 2;
-    const f = (s0.edge + (s1.edge - s0.edge) * u) / R, busy = s0.busy + (s1.busy - s0.busy) * u;
-    const amp = R * 0.006 * (0.5 + busy);   // busy groups also wobble more
-    return R * f + amp * (Math.sin(a * 9 + t * (0.6 + busy)) * 0.6 + Math.sin(a * 17 - t * (1 + busy)) * 0.4);
+    const edge = s0.edge + (s1.edge - s0.edge) * u;
+    return edge + R * 0.006 * (Math.sin(a * 9 + t) * 0.6 + Math.sin(a * 17 - t * 1.4) * 0.4);   // a small, even ripple so it looks alive; it carries no meaning
   }
 
   const FONT = 'ui-rounded, "SF Pro Rounded", "Nunito", "Segoe UI", system-ui, sans-serif';
@@ -147,7 +146,7 @@
         const lr = s.edge + 30, x = CX + Math.cos(s.mid) * lr, y = CY + Math.sin(s.mid) * lr;
         const words = s.name.split(" "), lines = words.length > 1 && s.name.length > 13 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [s.name];
         ctx.font = "700 12px " + FONT; ctx.textAlign = "center";
-        const half = Math.max(...lines.map((ln) => ctx.measureText(ln).width)) / 2 + 4;
+        const half = Math.max(...lines.concat([s.word]).map((ln) => ctx.measureText(ln).width)) / 2 + 6;
         const xx = Math.min(CX * 2 - half, Math.max(half, x)), y0 = y - (lines.length - 1) * 7 + 4;
         ctx.fillStyle = INK;
         lines.forEach((ln, i) => ctx.fillText(ln, xx, y0 + i * 14 - 7));
@@ -173,7 +172,7 @@
           ctx.globalAlpha = 1;
         }
         ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(n.x, n.y, n.rr, 0, Math.PI * 2); ctx.fill();
-        const big = n.rr >= 9, im = big || n === sel || n === hover ? logo(c) : null;
+        const big = n.rr >= 6.5, im = big || n === sel || n === hover ? logo(c) : null;
         const inner = n.rr - ringW * 0.5;
         if (im && inner > 3) {
           ctx.save(); ctx.beginPath(); ctx.arc(n.x, n.y, inner, 0, Math.PI * 2); ctx.clip();
