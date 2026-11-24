@@ -194,6 +194,30 @@ def update_earnings():
     return both
 
 
+# ---------------- company logos (Finnhub, looked up once and remembered) ----------------
+
+LOGO_FILE = DATA / "logos.json"
+
+
+def update_logos(symbols):
+    cache = json.loads(LOGO_FILE.read_text()) if LOGO_FILE.exists() else {}
+    key = os.environ.get("FINNHUB_KEY", "")
+    if DEMO or not key:
+        return cache
+    todo = [s for s in symbols if s not in cache][:700]
+    for s in todo:
+        try:
+            url = f"https://finnhub.io/api/v1/stock/profile2?symbol={s.replace('-', '.')}&token={key}"
+            cache[s] = json.loads(urllib.request.urlopen(url, timeout=20).read()).get("logo") or ""
+        except Exception:
+            pass
+        time.sleep(1.1)
+    if todo:
+        LOGO_FILE.write_text(json.dumps(cache, separators=(",", ":")))
+    print(f"Logos: {len(todo)} looked up, {sum(1 for v in cache.values() if v)} known")
+    return cache
+
+
 # ---------------- features ----------------
 
 def stock_features(df, mkt_ret):
@@ -751,6 +775,7 @@ def main():
         sys.exit("Market benchmark SPY missing, stopping")
     print(f"Prices loaded for {len(frames)} of {len(universe)} stocks")
     earnings = update_earnings()
+    logos = update_logos(list(frames))
 
     panel, full = build_panel(frames, {s: meta[s]["sector"] for s in frames}, earnings)
     dates = np.sort(panel["date"].unique())
@@ -887,6 +912,7 @@ def main():
                       "rk": int(L["rank"]) if L is not None else None, "pct": r(L["pct"], 3) if L is not None else None,
                       "sc": r(score), "mom": r(mom_now.get(s)),
                       "en": next_e, "es": r(last_e["surprise"]) if last_e is not None else None,
+                      "lg": logos.get(s) or None,
                       "p": odds_per[s]["p"] if s in odds_per else None, "vp": odds_per[s]["vp"] if s in odds_per else None,
                       "tz": r(per[s]["z"], 1) if s in per else None, "tc": per[s]["cause"] if s in per else None,
                       "tsr": r(per[s]["sector"]) if s in per else None, "tvx": r(per[s]["vx"], 1) if s in per else None,

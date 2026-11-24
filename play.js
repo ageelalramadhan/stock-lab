@@ -126,7 +126,7 @@
   function fillChart(c, stockPx, marketPx, n, mark) {
     c.stk.setData(pts(stockPx, n));
     c.mkt.setData(pts(marketPx, n));
-    c.stk.setMarkers(mark ? [{ time: T0 + LB * 86400, position: "aboveBar", shape: "circle", color: "#f0efec", text: "Your guess" }] : []);
+    c.stk.setMarkers(mark ? [{ time: T0 + LB * 86400, position: "aboveBar", shape: "circle", color: css("--text-primary"), text: "Your guess" }] : []);
     c.ch.timeScale().fitContent();
   }
   const chartLegend = (name) => `<div class="legend"><span><i class="sw ln brainc"></i>${name}</span><span><i class="sw ln momc"></i>The market (500 big US companies)</span>
