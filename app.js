@@ -77,7 +77,7 @@
     canvas.width = box.width * dpr; canvas.height = W * dpr;
     canvas.style.height = W + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    CX = box.width / 2; CY = W / 2; R = (Math.min(box.width, W) / 2 - (box.width < 520 ? 46 : 64)) / 1.13;
+    CX = box.width / 2; CY = W / 2; R = (Math.min(box.width, W) / 2 - (box.width < 520 ? 46 : 64)) / 1.2;
     const rs = d3.scaleSqrt().domain([0, maxDv]).range([R * 0.011 + 2, R * 0.062 + 3]);
     nodes.forEach((n) => {
       n.rr = rs(n.c.dv) * (1 + Math.min(4, Math.abs(n.c.tz || 0)) * 0.13);
@@ -87,6 +87,9 @@
     const sim = d3.forceSimulation(nodes).force("x", d3.forceX((n) => n.tx).strength(0.3)).force("y", d3.forceY((n) => n.ty).strength(0.3))
       .force("hit", d3.forceCollide((n) => n.rr + 1.5).iterations(2)).stop();
     for (let i = 0; i < 200; i++) sim.tick();
+    // the edge of each group reaches at least as far as its outermost bubble, so busy groups push it out
+    secs.forEach((s) => { s.edge = R * s.f; });
+    nodes.forEach((n) => { n.sec.edge = Math.max(n.sec.edge, Math.hypot(n.x - CX, n.y - CY) + n.rr + 8); });
     nodes.sort((a, b) => a.rr - b.rr); // big bubbles drawn last, on top
   }
 
@@ -99,7 +102,7 @@
     if (k < 0) m0 -= Math.PI * 2;
     if (k === secs.length - 1) m1 += Math.PI * 2;
     const u = (1 - Math.cos(Math.PI * Math.max(0, Math.min(1, (a - m0) / (m1 - m0))))) / 2;
-    const f = s0.f + (s1.f - s0.f) * u, busy = s0.busy + (s1.busy - s0.busy) * u;
+    const f = (s0.edge + (s1.edge - s0.edge) * u) / R, busy = s0.busy + (s1.busy - s0.busy) * u;
     const amp = R * 0.006 * (0.5 + busy);   // busy groups also wobble more
     return R * f + amp * (Math.sin(a * 9 + t * (0.6 + busy)) * 0.6 + Math.sin(a * 17 - t * (1 + busy)) * 0.4);
   }
@@ -141,7 +144,7 @@
         const a = s.a0 - GAP / 2;
         ctx.strokeStyle = "#e3dccb"; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.moveTo(CX + Math.cos(a) * R * 0.16, CY + Math.sin(a) * R * 0.16); ctx.lineTo(CX + Math.cos(a) * R * 0.95, CY + Math.sin(a) * R * 0.95); ctx.stroke();
-        const lr = R * s.f + 34, x = CX + Math.cos(s.mid) * lr, y = CY + Math.sin(s.mid) * lr;
+        const lr = s.edge + 30, x = CX + Math.cos(s.mid) * lr, y = CY + Math.sin(s.mid) * lr;
         const words = s.name.split(" "), lines = words.length > 1 && s.name.length > 13 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [s.name];
         ctx.font = "700 12px " + FONT; ctx.textAlign = "center";
         const half = Math.max(...lines.map((ln) => ctx.measureText(ln).width)) / 2 + 4;
