@@ -552,28 +552,78 @@
     if (prevClose) l.prevClose = prevClose;
     if (sym === selected) refresh();
   }
+
+  // Finnhub allows ONE open live connection per key. A second tab, window or device using the same key
+  // kicks the first one off, and then they take turns kicking each other. So:
+  //  1. only one tab of this site holds the connection (the others wait their turn)
+  //  2. no connection at all while the market is closed
+  //  3. if the connection keeps getting cut right after it opens, stop and say why instead of retrying forever
+  const TAB = Math.random().toString(36).slice(2), LOCK = "stocklab_live_owner";
+  function ownTab() {
+    try {
+      const o = JSON.parse(localStorage.getItem(LOCK) || "null"), now = Date.now();
+      if (!o || o.id === TAB || now - o.ts > 12000) { localStorage.setItem(LOCK, JSON.stringify({ id: TAB, ts: now })); return true; }
+      return false;
+    } catch (e) { return true; }
+  }
+  window.addEventListener("pagehide", () => { try { const o = JSON.parse(localStorage.getItem(LOCK) || "null"); if (o && o.id === TAB) localStorage.removeItem(LOCK); } catch (e) { /* ignore */ } });
+
+  let openedAt = 0, quickDrops = 0, fails = 0, nextTry = 0, blockedUntil = 0, keyBad = "", pauseUntil = 0;
+  function stop() {
+    if (ws) { ws.onclose = null; ws.onerror = null; try { ws.close(); } catch (e) { /* ignore */ } ws = null; }
+    clearInterval(timer); timer = null;
+  }
   async function poll(key) {
+    if (Date.now() < pauseUntil) return;
     const sym = order[idx]; idx = (idx + 1) % order.length;
     try {
       const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(toF(sym))}&token=${encodeURIComponent(key)}`);
-      if (r.status === 401 || r.status === 403) { status("warn", "Key rejected"); clearInterval(timer); return; }
+      if (r.status === 401 || r.status === 403) { keyBad = key; stop(); manage(); return; }
+      if (r.status === 429) { pauseUntil = Date.now() + 60000; return; }   // asked too often: rest for a minute
       if (!r.ok) return;
       const qd = await r.json();
       if (qd && qd.c) tick(sym, qd.c, qd.pc);
     } catch (e) { /* network blip */ }
   }
-  function connect() {
-    const key = getKey();
-    if (ws) { ws.onclose = null; ws.close(); ws = null; }
-    clearInterval(timer);
-    if (!key) { status("", "Live off"); return; }
+  function start(key) {
+    timer = setInterval(() => poll(key), 1300);   // about 46 a minute, safely under the free limit of 60
     status("warn", "Connecting");
-    timer = setInterval(() => poll(key), 1100);
-    ws = new WebSocket("wss://ws.finnhub.io?token=" + encodeURIComponent(key));
-    ws.onopen = () => { streamed.forEach((s) => ws.send(JSON.stringify({ type: "subscribe", symbol: toF(s) }))); status("on", "Live prices on"); };
-    ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.type === "trade" && m.data) m.data.forEach((tr) => tick(fromF(tr.s), tr.p)); };
-    ws.onclose = () => { status("warn", "Reconnecting"); setTimeout(() => { if (getKey()) connect(); }, 15000); };
+    const sock = ws = new WebSocket("wss://ws.finnhub.io?token=" + encodeURIComponent(key));
+    sock.onopen = () => {
+      openedAt = Date.now();
+      streamed.forEach((s) => sock.send(JSON.stringify({ type: "subscribe", symbol: toF(s) })));
+      status("on", "Live prices on");
+    };
+    sock.onmessage = (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.type === "trade" && m.data) { fails = 0; quickDrops = 0; m.data.forEach((tr) => tick(fromF(tr.s), tr.p)); }
+    };
+    sock.onclose = () => {
+      if (ws !== sock) return;
+      ws = null;
+      const lasted = openedAt ? Date.now() - openedAt : 0;
+      quickDrops = lasted < 30000 ? quickDrops + 1 : 0;   // cut off right after connecting
+      openedAt = 0; fails++;
+      if (quickDrops >= 3) { blockedUntil = Date.now() + 5 * 60000; quickDrops = 0; }
+      nextTry = Date.now() + Math.min(5 * 60000, 15000 * Math.pow(2, Math.min(fails - 1, 5)));   // wait longer after each failure
+      manage();
+    };
   }
+  function manage() {
+    const key = getKey(), now = Date.now();
+    if (!key) { stop(); status("", "Live off"); return; }
+    if (keyBad === key) { stop(); status("warn", "Key rejected. Check it under Live prices"); return; }
+    if (!marketOpen()) { stop(); fails = 0; status("", "Live prices start when the market opens"); return; }
+    if (!ownTab()) { stop(); status("warn", "Live prices are running in another tab"); return; }
+    if (now < blockedUntil) { stop(); status("warn", "Your key is in use somewhere else. Close other tabs or devices"); return; }
+    if (!timer) timer = setInterval(() => poll(key), 1300);
+    if (!ws) {
+      if (now >= nextTry) { clearInterval(timer); timer = null; start(key); }
+      else status("warn", "Live stream paused, retrying in " + Math.ceil((nextTry - now) / 1000) + "s");
+    }
+  }
+  function connect() { stop(); keyBad = ""; blockedUntil = 0; nextTry = 0; fails = 0; quickDrops = 0; manage(); }   // called when the key changes
+  setInterval(manage, 5000);
   const dlg = $("#key-dialog");
   $("#key-btn").addEventListener("click", () => { $("#key-input").value = getKey(); dlg.showModal(); });
   dlg.addEventListener("close", () => { if (dlg.returnValue === "save") setKey($("#key-input").value.trim()); if (dlg.returnValue === "clear") setKey(""); connect(); });
