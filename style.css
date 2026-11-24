@@ -362,3 +362,8 @@ b.up, b.down { font-weight: 800; }
 .k-edge2 { border: 5px solid #0b9e4a !important; border-left-color: #e02b2b !important; border-bottom-color: #e02b2b !important; border-radius: 50% !important; }
 .k-beat { border: none !important; background: repeating-linear-gradient(90deg, #0b9e4a 0 3px, transparent 3px 7px, #e02b2b 7px 10px, transparent 10px 14px) center bottom / 100% 60% no-repeat !important; border-radius: 0 !important; border-bottom: 4px solid #0b9e4a !important; }
 .oddsbar { background: linear-gradient(90deg, #f08f8f 0%, #eeeae0 45%, #eeeae0 55%, #7fd3a3 100%); }
+
+/* bigger cell */
+.cell-grid { grid-template-columns: minmax(0, 1.5fr) minmax(340px, 1fr); }
+@media (max-width: 1200px) { .cell-grid { grid-template-columns: 1fr; } }
+#cell-wrap { max-height: none; }

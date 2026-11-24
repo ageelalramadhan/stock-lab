@@ -78,19 +78,27 @@
     canvas.width = box.width * dpr; canvas.height = W * dpr;
     canvas.style.height = W + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    CX = box.width / 2; CY = W / 2; R = (Math.min(box.width, W) / 2 - (box.width < 520 ? 46 : 64)) / 1.17;
-    const rs = d3.scaleSqrt().domain([0, maxDv]).range([3.5, R * 0.1]);   // area grows with the money traded
-    nodes.forEach((n) => {
-      n.rr = rs(moneyDay(n.c));
-      n.tx = CX + Math.cos(n.ang) * rOf(n.c.p); n.ty = CY + Math.sin(n.ang) * rOf(n.c.p);
-      n.x = n.tx; n.y = n.ty;
-    });
-    const sim = d3.forceSimulation(nodes).force("x", d3.forceX((n) => n.tx).strength(0.3)).force("y", d3.forceY((n) => n.ty).strength(0.3))
-      .force("hit", d3.forceCollide((n) => n.rr + 1.5).iterations(2)).stop();
-    for (let i = 0; i < 200; i++) sim.tick();
-    // the edge of each group sits just outside its outermost bubble
-    secs.forEach((s) => { s.edge = 0; });   // no formula: the edge only wraps the bubbles
-    nodes.forEach((n) => { n.sec.edge = Math.max(n.sec.edge, Math.hypot(n.x - CX, n.y - CY) + n.rr + 8); });
+    CX = box.width / 2; CY = W / 2;
+    const half = Math.min(box.width, W) / 2, LABEL = box.width < 520 ? 50 : 84;
+    const place = (r) => {
+      R = r;
+      const rs = d3.scaleSqrt().domain([0, maxDv]).range([3.5, R * 0.1]);   // area grows with the money traded
+      nodes.forEach((n) => {
+        n.rr = rs(moneyDay(n.c));
+        n.tx = CX + Math.cos(n.ang) * rOf(n.c.p); n.ty = CY + Math.sin(n.ang) * rOf(n.c.p);
+        n.x = n.tx; n.y = n.ty;
+      });
+      const sim = d3.forceSimulation(nodes).force("x", d3.forceX((n) => n.tx).strength(0.3)).force("y", d3.forceY((n) => n.ty).strength(0.3))
+        .force("hit", d3.forceCollide((n) => n.rr + 1.5).iterations(2)).stop();
+      for (let i = 0; i < 200; i++) sim.tick();
+      // the edge of each group sits just outside its outermost bubble
+      secs.forEach((s) => { s.edge = 0; });
+      nodes.forEach((n) => { n.sec.edge = Math.max(n.sec.edge, Math.hypot(n.x - CX, n.y - CY) + n.rr + 8); });
+      return d3.max(secs, (s) => s.edge) + R * 0.085 + LABEL;   // how far the picture reaches: edge + beat lines + labels
+    };
+    // first try, then grow or shrink once so the cell fills the space exactly
+    const reach = place(half * 0.8);
+    place(Math.max(60, half * 0.8 * (half / reach)));
     nodes.sort((a, b) => a.rr - b.rr); // big bubbles drawn last, on top
   }
 
@@ -161,17 +169,23 @@
       // slices: one for each kind of company
       secs.forEach((s) => {
         const a = s.a0 - GAP / 2;
-        ctx.strokeStyle = "#e3dccb"; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(CX + Math.cos(a) * R * 0.16, CY + Math.sin(a) * R * 0.16); ctx.lineTo(CX + Math.cos(a) * R * 0.95, CY + Math.sin(a) * R * 0.95); ctx.stroke();
-        const lr = s.edge + R * 0.085 + 46, x = CX + Math.cos(s.mid) * lr, y = CY + Math.sin(s.mid) * lr;
+        const far = Math.max(s.edge, secs[(secs.indexOf(s) + secs.length - 1) % secs.length].edge) + R * 0.085 + 6;
+        ctx.strokeStyle = "#b9b3a4"; ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]);
+        ctx.beginPath(); ctx.moveTo(CX + Math.cos(a) * R * 0.16, CY + Math.sin(a) * R * 0.16); ctx.lineTo(CX + Math.cos(a) * far, CY + Math.sin(a) * far); ctx.stroke();
+        ctx.setLineDash([]);
+        const sub = `${s.ups} of ${s.list.length} went up`;
         const words = s.name.split(" "), lines = words.length > 1 && s.name.length > 13 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [s.name];
-        ctx.font = "700 12px " + FONT; ctx.textAlign = "center";
-        const half = Math.max(...lines.concat([`${s.ups} of ${s.list.length} went up`]).map((ln) => ctx.measureText(ln).width)) / 2 + 6;
-        const xx = Math.min(CX * 2 - half, Math.max(half, x)), y0 = y - (lines.length - 1) * 7 + 4;
+        ctx.font = "700 13px " + FONT; ctx.textAlign = "center";
+        const w = Math.max(...lines.map((ln) => ctx.measureText(ln).width), ctx.measureText(sub).width * 0.9) + 18, h = lines.length * 15 + 22;
+        const lr = s.edge + R * 0.085 + 14 + (Math.abs(Math.cos(s.mid)) * w + Math.abs(Math.sin(s.mid)) * h) / 2;
+        const x = Math.min(CX * 2 - w / 2 - 2, Math.max(w / 2 + 2, CX + Math.cos(s.mid) * lr));
+        const y = Math.min(W - h / 2 - 2, Math.max(h / 2 + 2, CY + Math.sin(s.mid) * lr));
+        ctx.fillStyle = "#fff"; ctx.strokeStyle = s.ups * 2 >= s.list.length ? UP : DOWN; ctx.lineWidth = 2;
+        ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x - w / 2, y - h / 2, w, h, 10); else ctx.rect(x - w / 2, y - h / 2, w, h); ctx.fill(); ctx.stroke();
         ctx.fillStyle = INK;
-        lines.forEach((ln, i) => ctx.fillText(ln, xx, y0 + i * 14 - 7));
-        ctx.font = "600 11px " + FONT; ctx.fillStyle = "#5d626b";
-        ctx.fillText(`${s.ups} of ${s.list.length} went up`, xx, y0 + lines.length * 14 - 7);
+        lines.forEach((ln, i) => ctx.fillText(ln, x, y - h / 2 + 17 + i * 15));
+        ctx.font = "600 12px " + FONT; ctx.fillStyle = "#474d57";
+        ctx.fillText(sub, x, y + h / 2 - 8);
       });
 
       // the companies
