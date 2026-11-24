@@ -120,7 +120,7 @@
     });
     const opt = { lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false };
     const mkt = ch.addLineSeries({ ...opt, color: css("--text-muted"), lastValueVisible: true });
-    const stk = ch.addLineSeries({ ...opt, color: "#3987e5", lastValueVisible: true });
+    const stk = ch.addLineSeries({ ...opt, color: css("--accent"), lastValueVisible: true });
     return { ch, stk, mkt };
   }
   function fillChart(c, stockPx, marketPx, n, mark) {

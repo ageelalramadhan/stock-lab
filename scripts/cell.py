@@ -641,8 +641,9 @@ company inc corp what why how here amid about just more most year week today mon
 
 
 def rank_headlines(items, sym, name):
-    """Order a day's headlines so the most reported story comes first: a headline scores higher when its
-    words appear in many of that day's other headlines. No guessing about what moved the price."""
+    """Group a day's headlines into stories and count how many headlines told each story.
+    Two headlines are the same story when they share enough of their distinctive words.
+    Returns the stories, most reported first. Counting only, no guessing about what moved the price."""
     own = {w for w in "".join(ch.lower() if ch.isalnum() else " " for ch in f"{sym} {name}").split()}
     seen, rows = set(), []
     for it in items:
@@ -651,8 +652,8 @@ def rank_headlines(items, sym, name):
         if not h or k in seen:
             continue
         seen.add(k)
-        words = {w for w in "".join(ch.lower() if ch.isalnum() else " " for ch in h).split()
-                 if len(w) > 3 and w not in STOP and w not in own}
+        words = {w[:6] for w in "".join(ch.lower() if ch.isalnum() else " " for ch in h).split()
+                 if len(w) > 3 and w not in STOP and w not in own}      # first 6 letters: "reinstates" = "reinstated"
         rows.append((h, it, words))
     freq = {}
     for _, _, words in rows:
@@ -663,9 +664,28 @@ def rank_headlines(items, sym, name):
         score = sum(freq[w] - 1 for w in words) / (len(words) ** 0.5 or 1)
         if any(w in h.lower() for w in own if len(w) > 2):
             score *= 1.5          # the headline names this company
-        scored.append((score, it.get("datetime", 0), h, it))
+        scored.append((score, it.get("datetime", 0), h, it, words))
     scored.sort(key=lambda x: (-x[0], x[1]))
-    return [{"headline": h[:170], "source": it.get("source", ""), "url": it.get("url", "")} for _, _, h, it in scored], len(rows)
+    stories = []   # each: {"words": words of its first headline, "members": [(headline, item, words)]}
+    for _, _, h, it, words in scored:
+        for st in stories:
+            both = words & st["words"]
+            if len(both) >= 2 and len(both) / max(1, min(len(words), len(st["words"]))) >= 0.4:
+                st["members"].append((h, it, words))
+                break
+        else:
+            stories.append({"words": words, "members": [(h, it, words)]})
+    out = []
+    for st in stories:
+        # show the plainest headline of the story: the one whose words the others share most; questions rank lower
+        wf = {}
+        for _, _, words in st["members"]:
+            for w in words:
+                wf[w] = wf.get(w, 0) + 1
+        best = max(st["members"], key=lambda m: sum(wf[w] for w in m[2]) / (len(m[2]) or 1) * (0.5 if "?" in m[0] else 1))
+        out.append({"headline": best[0][:170], "source": best[1].get("source", ""), "url": best[1].get("url", ""), "count": len(st["members"])})
+    out.sort(key=lambda x: -x["count"])
+    return out, len(rows)
 
 
 def attach_news(moves, priority, names):
@@ -677,7 +697,8 @@ def attach_news(moves, priority, names):
     for s, m in moves.items():
         for mv in m["top"]:
             c = cache.get(f"{s}|{mv['date']}")
-            if mv["cause"] in ("company", "earnings") and not (isinstance(c, dict) and "items" in c):
+            fresh = isinstance(c, dict) and c.get("v") == 2 and c.get("f", "") > mv["date"]   # counted, and fetched after that day ended
+            if mv["cause"] in ("company", "earnings") and not fresh:
                 todo.append((0 if s in priority else 1, -pd.Timestamp(mv["date"]).toordinal(), -abs(mv["ret"]), s, mv["date"]))
     todo.sort()
     fetched = 0
@@ -694,7 +715,7 @@ def attach_news(moves, priority, names):
                 continue
             lo, hi = (prev + timedelta(hours=20)).timestamp(), (day + timedelta(hours=21, minutes=30)).timestamp()
             ranked, n = rank_headlines([it for it in items if lo <= it.get("datetime", 0) <= hi], s, names.get(s, ""))
-            cache[f"{s}|{d}"] = {"n": n, "items": ranked[:8]}
+            cache[f"{s}|{d}"] = {"v": 2, "f": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "n": n, "items": ranked[:8]}
             fetched += 1
             time.sleep(1.1)  # stay under 60 calls a minute
         NEWS_CACHE.write_text(json.dumps(cache, separators=(",", ":")))

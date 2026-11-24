@@ -19,6 +19,7 @@
   const live = {};
   $("#sym-list").innerHTML = all.map((c) => `<option value="${esc(c.s)}">${esc(c.n)}</option>`).join("");
   const UP = css("--up"), DOWN = css("--down"), FLAT = "#a3a8b0", INK = css("--text-primary");
+  const SURF = css("--surface-1"), BG = css("--bg"), MUTED = css("--text-muted"), SEC = css("--text-secondary"), LINE = css("--border");
 
   // ---------- words ----------
   const n100 = (x) => Math.round(x * 100);
@@ -130,7 +131,7 @@
         if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
       }
       ctx.closePath();
-      ctx.fillStyle = "#ffffff"; ctx.fill();
+      ctx.fillStyle = SURF; ctx.fill();
 
       // the edge: green where most of that group went up, red where most went down
       secs.forEach((s) => {
@@ -160,7 +161,7 @@
       for (let v = Math.ceil(P_LO * 20) / 20; v <= P_HI + 1e-9; v += 0.05) {
         const rr = rOf(v), half = Math.abs(v - 0.5) < 0.001;
         ctx.setLineDash(half ? [] : [4, 6]);
-        ctx.strokeStyle = half ? "#9aa0a8" : "#e4e0d6"; ctx.lineWidth = half ? 2 : 1.2;
+        ctx.strokeStyle = half ? MUTED : LINE; ctx.lineWidth = half ? 2 : 1.2;
         ctx.beginPath(); ctx.arc(CX, CY, rr, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
         ringLabels.push([rr, half, half ? "coin flip: 50 out of 100" : n100(v) + " out of 100"]);
@@ -170,7 +171,7 @@
       secs.forEach((s) => {
         const a = s.a0 - GAP / 2;
         const far = Math.max(s.edge, secs[(secs.indexOf(s) + secs.length - 1) % secs.length].edge) + R * 0.085 + 6;
-        ctx.strokeStyle = "#b9b3a4"; ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]);
+        ctx.strokeStyle = MUTED; ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]);
         ctx.beginPath(); ctx.moveTo(CX + Math.cos(a) * R * 0.16, CY + Math.sin(a) * R * 0.16); ctx.lineTo(CX + Math.cos(a) * far, CY + Math.sin(a) * far); ctx.stroke();
         ctx.setLineDash([]);
         const sub = `${s.ups} of ${s.list.length} went up`;
@@ -180,11 +181,11 @@
         const lr = s.edge + R * 0.085 + 14 + (Math.abs(Math.cos(s.mid)) * w + Math.abs(Math.sin(s.mid)) * h) / 2;
         const x = Math.min(CX * 2 - w / 2 - 2, Math.max(w / 2 + 2, CX + Math.cos(s.mid) * lr));
         const y = Math.min(W - h / 2 - 2, Math.max(h / 2 + 2, CY + Math.sin(s.mid) * lr));
-        ctx.fillStyle = "#fff"; ctx.strokeStyle = s.ups * 2 >= s.list.length ? UP : DOWN; ctx.lineWidth = 2;
+        ctx.fillStyle = SURF; ctx.strokeStyle = s.ups * 2 >= s.list.length ? UP : DOWN; ctx.lineWidth = 2;
         ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x - w / 2, y - h / 2, w, h, 10); else ctx.rect(x - w / 2, y - h / 2, w, h); ctx.fill(); ctx.stroke();
         ctx.fillStyle = INK;
         lines.forEach((ln, i) => ctx.fillText(ln, x, y - h / 2 + 17 + i * 15));
-        ctx.font = "600 12px " + FONT; ctx.fillStyle = "#474d57";
+        ctx.font = "600 12px " + FONT; ctx.fillStyle = SEC;
         ctx.fillText(sub, x, y + h / 2 - 8);
       });
 
@@ -214,7 +215,7 @@
           ctx.drawImage(im, n.x - im.naturalWidth * k / 2, n.y - im.naturalHeight * k / 2, im.naturalWidth * k, im.naturalHeight * k);
           ctx.restore();
         } else if (big) {
-          ctx.fillStyle = INK; ctx.font = `700 ${Math.max(7, Math.min(12, n.rr * 0.62))}px ${FONT}`; ctx.textAlign = "center";
+          ctx.fillStyle = "#20242a"; ctx.font = `700 ${Math.max(7, Math.min(12, n.rr * 0.62))}px ${FONT}`; ctx.textAlign = "center";
           ctx.fillText(c.s.slice(0, 4), n.x, n.y + n.rr * 0.22);
         } else {
           ctx.fillStyle = col; ctx.beginPath(); ctx.arc(n.x, n.y, n.rr, 0, Math.PI * 2); ctx.fill();
@@ -234,8 +235,8 @@
       ringLabels.forEach(([rr, half, label]) => { // on top of the bubbles so they can always be read
         ctx.font = "600 12px " + FONT; ctx.textAlign = "center";
         const tw = ctx.measureText(label).width + 14;
-        ctx.fillStyle = "rgba(255,255,255,0.94)"; pill(CX - tw / 2, CY - rr - 10, tw, 20);
-        ctx.fillStyle = half ? INK : "#5d626b"; ctx.fillText(label, CX, CY - rr + 4);
+        ctx.fillStyle = SURF; pill(CX - tw / 2, CY - rr - 10, tw, 20);
+        ctx.fillStyle = half ? INK : SEC; ctx.fillText(label, CX, CY - rr + 4);
       });
       [hover, sel].forEach((n) => {
         if (!n) return;
@@ -243,11 +244,11 @@
         ctx.font = "700 12px " + FONT; ctx.textAlign = "center";
         const tw = ctx.measureText(n.c.s).width + 12, ty = n.y - n.rr - 16;
         ctx.fillStyle = INK; pill(n.x - tw / 2, ty - 9, tw, 18);
-        ctx.fillStyle = "#fff"; ctx.fillText(n.c.s, n.x, ty + 4);
+        ctx.fillStyle = BG; ctx.fillText(n.c.s, n.x, ty + 4);
       });
 
       // the middle
-      ctx.textAlign = "center"; ctx.fillStyle = "#7b808a"; ctx.font = "700 11px " + FONT;
+      ctx.textAlign = "center"; ctx.fillStyle = MUTED; ctx.font = "700 11px " + FONT;
       ctx.fillText("MIDDLE", CX, CY - 4);
       ctx.fillStyle = INK; ctx.font = "600 12px " + FONT;
       ctx.fillText("smaller chance", CX, CY + 12);
@@ -302,6 +303,14 @@
       : `<span class="chip flat">closed</span> The market is closed right now, so nothing is moving. The rings show what happened on the last day. It opens Monday to Friday at about ${opensAt} your time.`;
   }
 
+  // dark or light: remembered in this browser
+  const isDark = document.documentElement.dataset.theme === "dark";
+  $("#theme-btn").textContent = isDark ? "Light mode" : "Dark mode";
+  $("#theme-btn").addEventListener("click", () => {
+    try { localStorage.setItem("stocklab_theme", isDark ? "light" : "dark"); } catch (e) { /* ignore */ }
+    location.reload();
+  });
+
   // the picture story can be hidden
   const story = $("#story");
   const setStory = (closed) => { story.classList.toggle("closed", closed); $("#story-toggle").textContent = closed ? "Show" : "Hide"; };
@@ -352,10 +361,11 @@
     if (!news || !news.items) return "";
     const items = news.items.filter((x) => x && x.headline);
     if (!items.length) return '<p class="muted small">We found no news for that day.</p>';
-    const link = (x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.headline)}</a> <span class="muted">(${esc(x.source)})</span>`;
-    const more = items.length > 1 ? `<details class="newslist"><summary>See the news from that day (${items.length}${news.n > items.length ? " of " + news.n : ""})</summary>
+    const times = (x) => (x.count ? ` <span class="count">reported about ${x.count} time${x.count === 1 ? "" : "s"}</span>` : "");
+    const link = (x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.headline)}</a> <span class="muted">(${esc(x.source)})</span>${times(x)}`;
+    const more = items.length > 1 ? `<details class="newslist"><summary>See all ${items.length} stories from that day</summary>
       <ol>${items.map((x) => `<li>${link(x)}</li>`).join("")}</ol>
-      <p class="muted small">Ordered by how many headlines told the same story. We cannot know for sure which one moved the price, so read them and decide.</p></details>` : "";
+      <p class="muted small">${news.n ? "From " + news.n + " headlines in our news feed that day. " : ""}Headlines that tell the same story are counted together, so the counts are approximate. We cannot know for sure which story moved the price, so read them and decide.</p></details>` : "";
     return `<p>${items.length > 1 ? "Most reported that day: " : "In the news that day: "}${link(items[0])}</p>${more}`;
   }
 
