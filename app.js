@@ -61,6 +61,7 @@
     s.ratio = d3.sum(s.list, moneyDay) / usual;   // last day's trading compared with a usual day
     s.word = s.ratio >= 1.15 ? "busier than usual" : s.ratio <= 0.87 ? "quieter than usual" : "a usual day";
     s.ups = s.list.filter((c) => (c.d1 || 0) > 0).length;
+    s.ticks = []; s.pulse = 0; s.dir = 0; s.flip = 0;
   });
   const GAP = 0.035, total = cos.length;
   let a0 = -Math.PI / 2;
@@ -71,6 +72,8 @@
   const nodeOf = Object.fromEntries(nodes.map((n) => [n.c.s, n]));
   const rOf = (p) => R * (0.2 + 0.68 * Math.max(0, Math.min(1, (p - P_LO) / (P_HI - P_LO))));
 
+  const hasKey = () => { try { return !!localStorage.getItem(KEY_NAME); } catch (e) { return false; } };
+  let hoverSec = null;
   function layout() {
     const wrap = $("#cell-wrap"), bw = wrap.getBoundingClientRect().width;
     if (!bw) return;
@@ -106,7 +109,9 @@
         s.lines = words.length > 1 && s.name.length > 13 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [s.name];
         ctx.font = "700 13px " + FONT;
         s.lw = Math.max(...s.lines.map((ln) => ctx.measureText(ln).width), ctx.measureText(s.sub).width * 0.93) + 18;
-        s.lh = s.lines.length * 15 + 22;
+        s.liveLine = hasKey();
+        if (s.liveLine) s.lw = Math.max(s.lw, ctx.measureText("00 new this minute").width * 0.93 + 18);
+        s.lh = s.lines.length * 15 + 22 + (s.liveLine ? 15 : 0);
         // start just outside the edge and step outward until the box covers nothing
         let lr = s.edge + 10;
         for (let i = 0; i < 120; i++, lr += 3) {
@@ -174,7 +179,9 @@
           const r = edgeAt(a, t), x = CX + Math.cos(a) * r, y = CY + Math.sin(a) * r;
           if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
         }
-        ctx.strokeStyle = s.ups * 2 >= s.list.length ? UP : DOWN; ctx.lineWidth = 5; ctx.lineCap = "butt"; ctx.lineJoin = "round"; ctx.stroke();
+        const beat = s.pulse ? Math.max(0, 1 - (now - s.pulse) / 700) : 0, flip = s.flip ? Math.max(0, 1 - (now - s.flip) / 3000) : 0;
+        s.beat = beat; s.flipNow = flip;
+        ctx.strokeStyle = s.ups * 2 >= s.list.length ? UP : DOWN; ctx.lineWidth = 5 + beat * 4 + flip * 6 + (s === hoverSec ? 3 : 0); ctx.lineCap = "butt"; ctx.lineJoin = "round"; ctx.stroke();
       });
 
       // the beat: one line for every company, standing on the edge. Longer line = bigger move on the last day.
@@ -217,19 +224,27 @@
         ctx.setLineDash([]);
         const x = s.lx, y = s.ly, w = s.lw, h = s.lh;
         ctx.textAlign = "center";
-        ctx.fillStyle = SURF; ctx.strokeStyle = s.ups * 2 >= s.list.length ? UP : DOWN; ctx.lineWidth = 2;
+        const b = s.beat || 0, fl = s.flipNow || 0;
+        ctx.fillStyle = SURF; ctx.strokeStyle = b > 0 && s.dir ? (s.dir > 0 ? UP : DOWN) : (s.ups * 2 >= s.list.length ? UP : DOWN);
+        ctx.lineWidth = 2 + b * 3 + fl * 4 + (s === hoverSec ? 2 : 0);
         ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x - w / 2, y - h / 2, w, h, 10); else ctx.rect(x - w / 2, y - h / 2, w, h); ctx.fill(); ctx.stroke();
         ctx.font = "700 13px " + FONT; ctx.fillStyle = INK;
         s.lines.forEach((ln, i) => ctx.fillText(ln, x, y - h / 2 + 17 + i * 15));
         ctx.font = "600 12px " + FONT; ctx.fillStyle = SEC;
-        ctx.fillText(s.sub, x, y + h / 2 - 8);
+        ctx.fillText(`${s.ups} of ${s.list.length} went up`, x, y + h / 2 - 8 - (s.liveLine ? 15 : 0));
+        if (s.liveLine) {
+          const k = s.ticks.length;
+          ctx.fillStyle = k ? INK : MUTED;
+          ctx.fillText(k ? `${k} new this minute` : "quiet right now", x, y + h / 2 - 8);
+        }
       });
 
       // the companies
       const sel = nodeOf[selected];
       nodes.forEach((n) => {
         const c = n.c, mv = dayMove(c), col = dayCol(mv), l = live[c.s];
-        // every ring blinks: faster and stronger for bigger moves, and a bright flash when a live price arrives
+        const fade = hoverSec && n.sec !== hoverSec;
+        if (fade) { ctx.globalAlpha = 0.18; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(n.x, n.y, n.rr, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; return; }
         // rings stay still. A ring only flashes when a real new price arrives (market open + live prices on).
         const blink = 1;
         const flash = l && l.pulse ? Math.max(0, 1 - (now - l.pulse) / 900) : 0;
@@ -310,7 +325,21 @@
   const tipEl = $("#tip");
   canvas.addEventListener("mousemove", (e) => {
     hover = nodeAt(e);
-    canvas.style.cursor = hover ? "pointer" : "default";
+    const cb = canvas.getBoundingClientRect(), px = e.clientX - cb.left, py = e.clientY - cb.top;
+    hoverSec = hover ? null : secs.find((s) => Math.abs(px - s.lx) <= s.lw / 2 && Math.abs(py - s.ly) <= s.lh / 2) || null;
+    canvas.style.cursor = hover || hoverSec ? "pointer" : "default";
+    if (hoverSec) {
+      const s = hoverSec, by = s.list.slice().sort((a, b) => (dayMove(b) || 0) - (dayMove(a) || 0)), top = by[0], bot = by[by.length - 1];
+      tipEl.innerHTML = `<b>${esc(s.name)}</b>
+        <div><span>Went up</span><span>${s.ups} of ${s.list.length}</span></div>
+        <div><span>Biggest rise</span><span>${esc(top.s)} ${chip(dayMove(top))}</span></div>
+        <div><span>Biggest fall</span><span>${esc(bot.s)} ${chip(dayMove(bot))}</span></div>
+        <div><span>Money traded</span><span>${s.word}</span></div>
+        ${s.liveLine ? `<div><span>New prices this minute</span><span>${s.ticks.length}</span></div>` : ""}`;
+      let x = e.clientX + 16; if (x + 290 > window.innerWidth) x -= 310;
+      tipEl.style.left = x + "px"; tipEl.style.top = e.clientY + 16 + "px"; tipEl.hidden = false;
+      return;
+    }
     if (!hover) { tipEl.hidden = true; return; }
     const c = hover.c;
     tipEl.innerHTML = `<div class="tip-row">${c.lg ? `<img src="${esc(c.lg)}" alt="">` : ""}<b>${esc(c.n)}</b></div>
@@ -319,7 +348,7 @@
     let x = e.clientX + 16; if (x + 270 > window.innerWidth) x -= 290;
     tipEl.style.left = x + "px"; tipEl.style.top = e.clientY + 16 + "px"; tipEl.hidden = false;
   });
-  canvas.addEventListener("mouseleave", () => { hover = null; tipEl.hidden = true; });
+  canvas.addEventListener("mouseleave", () => { hover = null; hoverSec = null; tipEl.hidden = true; });
   canvas.addEventListener("click", (e) => { const n = nodeAt(e); if (n) select(n.c.s); });
   window.addEventListener("resize", layout);
 
@@ -547,7 +576,11 @@
   function tick(sym, p, prevClose) {
     const l = live[sym] || (live[sym] = {});
     const before = l.price;   // only compare with an earlier LIVE price, never with last night's stored price
-    if (before && p !== before) { l.dir = p > before ? 1 : -1; l.pulse = performance.now(); }
+    if (before && p !== before) {
+      l.dir = p > before ? 1 : -1; l.pulse = performance.now();
+      const n = nodeOf[sym];
+      if (n) { n.sec.pulse = l.pulse; n.sec.dir = l.dir; n.sec.ticks.push(Date.now()); }
+    }
     l.price = p;
     if (prevClose) l.prevClose = prevClose;
     if (sym === selected) refresh();
@@ -622,6 +655,15 @@
   }
   function connect() { stop(); keyBad = ""; blockedUntil = 0; nextTry = 0; fails = 0; quickDrops = 0; manage(); }   // called when the key changes
   setInterval(manage, 5000);
+  setInterval(() => {   // keep every group's facts current
+    const cut = Date.now() - 60000;
+    secs.forEach((s) => {
+      while (s.ticks.length && s.ticks[0] < cut) s.ticks.shift();
+      const ups = s.list.filter((c) => (dayMove(c) || 0) > 0).length;
+      if ((ups * 2 >= s.list.length) !== (s.ups * 2 >= s.list.length)) s.flip = performance.now();   // the group just switched between mostly up and mostly down
+      s.ups = ups;
+    });
+  }, 1000);
   const dlg = $("#key-dialog");
   $("#key-btn").addEventListener("click", () => { $("#key-input").value = getKey(); dlg.showModal(); });
   dlg.addEventListener("close", () => { if (dlg.returnValue === "save") setKey($("#key-input").value.trim()); if (dlg.returnValue === "clear") setKey(""); connect(); });
