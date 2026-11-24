@@ -345,7 +345,7 @@
     $("#market-note").innerHTML = open
       ? (key ? '<span class="chip up">open</span> The market is open. A ring flashes each time a new price arrives.'
              : '<span class="chip up">open</span> The market is open. Add a key under "Live prices" to see rings flash with each new price.')
-      : `<span class="chip flat">closed</span> The market is closed right now, so nothing is moving. The rings show what happened on the last day. It opens Monday to Friday at about ${opensAt} your time.`;
+      : `<span class="chip flat">closed</span> The market is closed right now. The rings show what happened on the last day. ${key ? "Your live connection stays on, so any early or late trading will still flash. " : ""}It opens Monday to Friday at about ${opensAt} your time.`;
   }
 
   // dark or light: remembered in this browser
@@ -556,8 +556,7 @@
   // Finnhub allows ONE open live connection per key. A second tab, window or device using the same key
   // kicks the first one off, and then they take turns kicking each other. So:
   //  1. only one tab of this site holds the connection (the others wait their turn)
-  //  2. no connection at all while the market is closed
-  //  3. if the connection keeps getting cut right after it opens, stop and say why instead of retrying forever
+  //  2. if the connection keeps getting cut right after it opens, stop and say why instead of retrying forever
   const TAB = Math.random().toString(36).slice(2), LOCK = "stocklab_live_owner";
   function ownTab() {
     try {
@@ -592,7 +591,7 @@
     sock.onopen = () => {
       openedAt = Date.now();
       streamed.forEach((s) => sock.send(JSON.stringify({ type: "subscribe", symbol: toF(s) })));
-      status("on", "Live prices on");
+      status("on", marketOpen() ? "Live prices on" : "Live connected (market closed)");
     };
     sock.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
@@ -604,7 +603,7 @@
       const lasted = openedAt ? Date.now() - openedAt : 0;
       quickDrops = lasted < 30000 ? quickDrops + 1 : 0;   // cut off right after connecting
       openedAt = 0; fails++;
-      if (quickDrops >= 3) { blockedUntil = Date.now() + 5 * 60000; quickDrops = 0; }
+      if (quickDrops >= 3 && marketOpen()) { blockedUntil = Date.now() + 5 * 60000; quickDrops = 0; }
       nextTry = Date.now() + Math.min(5 * 60000, 15000 * Math.pow(2, Math.min(fails - 1, 5)));   // wait longer after each failure
       manage();
     };
@@ -613,7 +612,6 @@
     const key = getKey(), now = Date.now();
     if (!key) { stop(); status("", "Live off"); return; }
     if (keyBad === key) { stop(); status("warn", "Key rejected. Check it under Live prices"); return; }
-    if (!marketOpen()) { stop(); fails = 0; status("", "Live prices start when the market opens"); return; }
     if (!ownTab()) { stop(); status("warn", "Live prices are running in another tab"); return; }
     if (now < blockedUntil) { stop(); status("warn", "Your key is in use somewhere else. Close other tabs or devices"); return; }
     if (!timer) timer = setInterval(() => poll(key), 1300);
