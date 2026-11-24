@@ -546,7 +546,7 @@
   const refresh = () => { if (pending) return; pending = true; setTimeout(() => { pending = false; if (selected) renderCompany(); }, 1500); };
   function tick(sym, p, prevClose) {
     const l = live[sym] || (live[sym] = {});
-    const before = l.price || (bySym[sym] && bySym[sym].px);
+    const before = l.price;   // only compare with an earlier LIVE price, never with last night's stored price
     if (before && p !== before) { l.dir = p > before ? 1 : -1; l.pulse = performance.now(); }
     l.price = p;
     if (prevClose) l.prevClose = prevClose;
