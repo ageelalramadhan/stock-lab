@@ -159,8 +159,8 @@
       nodes.forEach((n) => {
         const c = n.c, mv = dayMove(c), col = dayCol(mv), l = live[c.s];
         // every ring blinks: faster and stronger for bigger moves, and a bright flash when a live price arrives
-        const size = Math.min(1, Math.abs(mv || 0) / 0.04);
-        const blink = col === FLAT ? 0.6 : 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * (2.2 + 4 * size) + n.ph));
+        // rings stay still. A ring only flashes when a real new price arrives (market open + live prices on).
+        const blink = 1;
         const flash = l && l.pulse ? Math.max(0, 1 - (now - l.pulse) / 900) : 0;
         const ringCol = flash > 0 && l.dir ? (l.dir > 0 ? UP : DOWN) : col;
         const ringW = Math.max(1.5, n.rr * 0.2) + flash * 3;
@@ -249,6 +249,21 @@
       For a normal company, the chance to be worth more next month is <b>${n100(P_MID)} out of 100</b>. Tap any bubble to see why.`;
     $("#updated").textContent = `Updated ${CELL.generated}. Prices up to ${CELL.data_through}. It updates itself every weekday night.`;
   })();
+
+  // is the New York stock exchange open right now? (Monday to Friday, 9:30 to 16:00 New York time; holidays not counted)
+  function marketOpen() {
+    const ny = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+    const mins = ny.getHours() * 60 + ny.getMinutes();
+    return ny.getDay() >= 1 && ny.getDay() <= 5 && mins >= 570 && mins < 960;
+  }
+  function marketNote() {
+    const open = marketOpen(), key = !!getKey();
+    const opensAt = new Date(Date.UTC(2026, 0, 5, 14, 30)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    $("#market-note").innerHTML = open
+      ? (key ? '<span class="chip up">open</span> The market is open. A ring flashes each time a new price arrives.'
+             : '<span class="chip up">open</span> The market is open. Add a key under "Live prices" to see rings flash with each new price.')
+      : `<span class="chip flat">closed</span> The market is closed right now, so nothing is moving. The rings show what happened on the last day. It opens Monday to Friday at about ${opensAt} your time.`;
+  }
 
   // the picture story can be hidden
   const story = $("#story");
@@ -462,6 +477,7 @@
 
   // ---------- start ----------
   layout();
+  marketNote(); setInterval(marketNote, 60000);
   requestAnimationFrame(draw);
   select(cos.slice().sort((a, b) => b.dv - a.dv)[0].s);
   connect();
