@@ -11,14 +11,16 @@
   const FD = F && F.days ? F.days : [], lastDay = C.data_through || "", yr = lastDay.slice(0, 4);
   const since = C.history_from ? new Date(C.history_from + "T12:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : "the start of our data";
   // [button, data field, words, trading days of the money record to count]
+  const ago = (months) => { const d = new Date(lastDay + "T12:00:00"); d.setMonth(d.getMonth() - months); return d.toISOString().slice(0, 10); };
+  const daysSince = (start) => FD.filter((d) => d.d > start).length || 1;
   const PERIODS = {
     day: ["1 day", "d1", "on the last trading day", 1], week: ["5 days", "w1", "over the last 5 trading days", 5],
-    month: ["1 month", "m1", "over the last month", 21], half: ["6 months", "h1", "over the last 6 months", 126],
+    month: ["1 month", "c1m", "over the last month", daysSince(ago(1))], half: ["6 months", "c6m", "over the last 6 months", daysSince(ago(6))],
     ytd: ["This year", "ytd", "since 1 January " + yr + " (YTD, year to date)", FD.filter((d) => d.d.slice(0, 4) === yr).length || 1],
-    year: ["1 year", "y1", "over the last year", 252], five: ["5 years", "y5", "over the last 5 years", 1260],
+    year: ["1 year", "c1y", "over the last year", daysSince(ago(12))], five: ["5 years", "c5y", "over the last 5 years", 99999],
     max: ["Max", "mx", "since " + since + " (all the history we store)", 99999],
   };
-  const cells = C.cells.filter((c) => c.sec !== "Benchmark");
+  const cells = C.cells.filter((c) => c.sec !== "Benchmark" && c.p != null);   // the same companies as the cell below
   const names = Array.from(new Set(cells.map((c) => c.sec))).sort();
   const groups = names.map((nm) => ({ nm, list: cells.filter((c) => c.sec === nm).sort((a, b) => (b.dv || 0) - (a.dv || 0)) }));
   const live = {};
@@ -30,9 +32,10 @@
       <div class="period-bar" id="sig-period"></div></div>
     <div id="sig-wrap"><canvas id="sig"></canvas></div>
     <div class="sig-key"><span><b>Each thin bar is one company.</b> Up and green: its price rose. Down and red: it fell. Longer: a bigger change in percent.</span>
+      <span>Every number here is counted from real closing prices (Yahoo Finance). Nothing on this line is a forecast.</span>
       <span><b>Thick line</b>: the middle company of that category.</span><span>Inside a category the most traded companies are on the left. Click a bar to open that company.</span>
       <span><b>5 years and Max</b> use today's list of companies. Companies that were removed are missing, and newer companies without the full history are left out, so long periods look better than they really were.</span>
-      <span><b>\u20ac100 became</b>: 100 euros shared equally between all companies of that category at the start, and what they would be worth at the end. Price changes only: no fees, and no change between euro and dollar.</span></div>
+      <span><b>\u20ac100 became</b>: 100 euros shared equally between all companies of that category at the start, and what they would be worth at the end. Counted from prices that include paid dividends (as if they were put back in). No fees, and no change between euro and dollar.</span></div>
     <p class="lead" id="sig-money" style="margin-top:8px"></p>`;
   const cv = box.querySelector("#sig"), wrap = box.querySelector("#sig-wrap");
 

@@ -32,9 +32,9 @@
   // the time period the cell and the signal line show. key, button, data field, longest line (as a change), words, short label
   const PERIODS = [
     ["day", "1 day", "d1", 0.06, "on the last trading day", "last day"], ["week", "5 days", "w1", 0.1, "over the last 5 trading days", "last 5 days"],
-    ["month", "1 month", "m1", 0.2, "over the last month", "last month"], ["half", "6 months", "h1", 0.4, "over the last 6 months", "last 6 months"],
-    ["ytd", "This year", "ytd", 0.5, "since 1 January", "this year"], ["year", "1 year", "y1", 0.6, "over the last year", "last year"],
-    ["five", "5 years", "y5", 2, "over the last 5 years", "last 5 years"], ["max", "Max", "mx", 4, "in all the history we store", "all history"],
+    ["month", "1 month", "c1m", 0.2, "over the last month", "last month"], ["half", "6 months", "c6m", 0.4, "over the last 6 months", "last 6 months"],
+    ["ytd", "This year", "ytd", 0.5, "since 1 January", "this year"], ["year", "1 year", "c1y", 0.6, "over the last year", "last year"],
+    ["five", "5 years", "c5y", 2, "over the last 5 years", "last 5 years"], ["max", "Max", "mx", 4, "in all the history we store", "all history"],
   ];
   let PER = PERIODS[0];
   const dayMove = (c) => {   // the company's change for the chosen period. A live price, if one has arrived, replaces last night's price.

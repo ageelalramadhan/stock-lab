@@ -1001,11 +1001,15 @@ def main():
         next_e = nxt.iloc[0]["date"] if len(nxt) else None
 
         def chg(n):
-            return r(c.iloc[-1] / c.iloc[-1 - n] - 1) if len(c) > n else None
+            return r(c.iloc[-1] / c.iloc[-1 - n] - 1, 6) if len(c) > n else None
+        def cal(**ago):   # change since the last close on or before the same calendar date, e.g. one month ago
+            start = today - pd.DateOffset(**ago)
+            before = c[c.index <= start]
+            return r(c.iloc[-1] / before.iloc[-1] - 1, 6) if len(before) else None
         ytd = c[c.index.year == today.year]
         before_year = c[c.index.year < today.year]
-        ytd_chg = r(c.iloc[-1] / before_year.iloc[-1] - 1) if len(before_year) and len(ytd) else None
-        max_chg = r(c.iloc[-1] / c.iloc[0] - 1) if c.index[0] <= first_day + pd.Timedelta(days=7) else None   # only companies with the full history
+        ytd_chg = r(c.iloc[-1] / before_year.iloc[-1] - 1, 6) if len(before_year) and len(ytd) else None
+        max_chg = r(c.iloc[-1] / c.iloc[0] - 1, 6) if c.index[0] <= first_day + pd.Timedelta(days=7) else None   # only companies with the full history
         score = float(L["score"]) if L is not None else None
 
         # band: brain's expected edge vs. the market, plus the stock's own typical swing
@@ -1053,7 +1057,8 @@ def main():
         }
         write_js(STOCK_DIR / f"{s}.js", f"window.STOCK_DETAIL=window.STOCK_DETAIL||{{}};window.STOCK_DETAIL[{json.dumps(s)}]=", detail)
         cells.append({"s": s, "n": m["name"], "sec": m["sector"], "px": r(last_close, 2), "d1": chg(1),
-                      "m1": chg(21), "w1": chg(5), "h1": chg(126), "ytd": ytd_chg, "y1": chg(252), "y5": chg(1260), "mx": max_chg, "dv": round(float((c * df["Volume"]).iloc[-60:].mean()) / 1e6, 1),
+                      "m1": chg(21), "w1": chg(5), "h1": chg(126), "ytd": ytd_chg, "y1": chg(252), "y5": chg(1260), "mx": max_chg,
+                      "c1m": cal(months=1), "c6m": cal(months=6), "c1y": cal(years=1), "c5y": cal(years=5), "dv": round(float((c * df["Volume"]).iloc[-60:].mean()) / 1e6, 1),
                       "rk": int(L["rank"]) if L is not None else None, "pct": r(L["pct"], 3) if L is not None else None,
                       "sc": r(score), "mom": r(mom_now.get(s)),
                       "en": next_e, "es": r(last_e["surprise"]) if last_e is not None else None,
