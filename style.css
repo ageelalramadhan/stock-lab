@@ -437,3 +437,12 @@ b.up, b.down { font-weight: 800; }
 #fl-pot .ld { stroke: var(--text-muted); stroke-width: 1; }
 #fl-pot text.t.n { font-weight: 800; font-size: 15px; }
 #fl-pot text.t.in-lab { font-size: 12px; }
+
+/* ---------- the money signal on the cell page ---------- */
+#signal { margin-bottom: 16px; border-radius: 16px; }
+.sig-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.sig-head .lead { margin-bottom: 6px; }
+#sig-seg button { font-size: 14px; padding: 7px 14px; }
+#sig-wrap { overflow-x: auto; } #sig { display: block; }
+.sig-key { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; color: var(--text-secondary); margin-top: 6px; }
+.sig-key b { color: var(--text-primary); }

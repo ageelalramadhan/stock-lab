@@ -231,4 +231,5 @@
   }
 
   window.addEventListener("stocklab-flow", () => { if (!built) build(); renderDay(); drawStrip(); });
+  window.STOCKLAB_FLOW_PICK = (i) => { if (!built) build(); pick(i); };
 })();

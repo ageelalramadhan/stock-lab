@@ -566,7 +566,7 @@
   function show(v) {
     ["cell", "play", "flow", "track"].forEach((k) => ($("#" + k + "-view").hidden = v !== k));
     document.querySelectorAll("#view-seg button").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
-    if (v === "cell") layout();
+    if (v === "cell") { layout(); window.dispatchEvent(new Event("stocklab-cell")); }
     if (v === "track") renderTrack();
     if (v === "play") window.dispatchEvent(new Event("stocklab-play"));
     if (v === "flow") window.dispatchEvent(new Event("stocklab-flow"));
