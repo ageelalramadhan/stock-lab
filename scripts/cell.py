@@ -566,7 +566,7 @@ def build_flows(frames, sector_of):
         rows, clues = [], {}
         for k in names:
             st = int(state.at[d, k])
-            rows.append([r(extra[k], 2), r(z.at[d, k], 1), r(move.at[d, k]), int(ups.at[d, k]), int(cnt.at[d, k]), st])
+            rows.append([r(extra[k], 2), r(z.at[d, k], 1), r(move.at[d, k]), int(ups.at[d, k]), int(cnt.at[d, k]), st, r(share.at[d, k] * 100, 1)])
             if st == 0:
                 continue
             c = cols[k]

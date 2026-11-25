@@ -427,3 +427,13 @@ b.up, b.down { font-weight: 800; }
 @media (max-width: 640px) { .fl-row { grid-template-columns: 110px minmax(60px, 1fr) 44px 96px; font-size: 12px; } .fl-nav b { min-width: 0; } }
 .fl-sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; }
 .fl-legend { font-size: 13px; color: var(--text-secondary); display: flex; gap: 6px 18px; }
+:root { --fl-plain: #d9d3c4; } :root[data-theme="dark"] { --fl-plain: #4a463c; }
+#fl-pot { margin: 6px 0 4px; } #fl-pot svg { display: block; max-width: 100%; }
+#fl-pot .cap { font-size: 11px; fill: var(--text-muted); }
+#fl-pot rect.u { fill: var(--fl-plain); opacity: 0.75; }
+#fl-pot rect.s.plain { fill: var(--fl-plain); } #fl-pot rect.s.in { fill: var(--up); } #fl-pot rect.s.out { fill: var(--down); }
+#fl-pot text.t { font-size: 13px; font-weight: 600; fill: var(--text-primary); pointer-events: none; } #fl-pot text.t .n { font-weight: 800; }
+#fl-pot text.t.in:not(.out-lab), #fl-pot text.t.out:not(.out-lab) { fill: #fff; }
+#fl-pot .ld { stroke: var(--text-muted); stroke-width: 1; }
+#fl-pot text.t.n { font-weight: 800; font-size: 15px; }
+#fl-pot text.t.in-lab { font-size: 12px; }

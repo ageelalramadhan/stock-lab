@@ -16,7 +16,7 @@
   const share = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   const longDate = (s) => new Date(s + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const list = (a) => (a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1]);
-  const row = (d, i) => ({ name: N[i], extra: d.rows[i][0], z: d.rows[i][1], move: d.rows[i][2], up: d.rows[i][3], n: d.rows[i][4], st: d.rows[i][5] });
+  const row = (d, i) => ({ name: N[i], extra: d.rows[i][0], z: d.rows[i][1], move: d.rows[i][2], up: d.rows[i][3], n: d.rows[i][4], st: d.rows[i][5], sh: d.rows[i][6] });
 
   function build() {
     built = true;
@@ -33,12 +33,17 @@
         <button class="btn" id="fl-last">Newest day</button>
       </div>
       <div class="fl-say" id="fl-say"></div>
-      <div class="fl-bars" id="fl-bars"></div>
+      <div id="fl-pot"></div>
       <div class="legend fl-legend">
-        <span><i class="fl-sw" style="background:var(--up)"></i>prices went up</span>
-        <span><i class="fl-sw" style="background:var(--down)"></i>prices went down</span>
-        <span>Bar to the right: bigger slice of the trading than usual. Bar to the left: smaller. Pale bar: inside its normal range.</span>
+        <span><i class="fl-sw" style="background:var(--up)"></i>money came in</span>
+        <span><i class="fl-sw" style="background:var(--down)"></i>money went out</span>
+        <span><i class="fl-sw" style="background:var(--fl-plain)"></i>a normal day for this category</span>
+        <span>The long bar is all the money traded that day. Each piece is one category. The thin bar on top shows the usual split.</span>
       </div>
+      <details class="newslist"><summary>See the numbers for each category</summary>
+      <div class="fl-bars" id="fl-bars"></div>
+      <p class="note">Bar to the right: bigger slice of the trading than usual. Bar to the left: smaller. Green: prices went up. Red: prices went down. Pale: inside its normal range.</p>
+      </details>
       <div id="fl-clues"></div>
 
       <h2 style="margin-top:30px">The past year, day by day</h2>
@@ -83,6 +88,7 @@
       ${d.shift.toFixed(1)} out of every 100 dollars traded sat in a different category than usual (a normal day: ${F.typical_shift.toFixed(1)}).</p>`;
     $("#fl-say").innerHTML = say;
 
+    lastRows = rows; drawPot();
     const max = Math.max(2, ...rows.map((x) => Math.abs(x.extra)));
     $("#fl-bars").innerHTML = rows.slice().sort((a, b) => b.extra - a.extra).map((x) => {
       const w = (Math.abs(x.extra) / max) * 50, dir = x.move >= 0 ? "up" : "down", strong = x.st !== 0;
@@ -112,6 +118,51 @@
       }
       return `<div class="fl-clue"><h4><span class="chip ${x.st === 1 ? "up" : "down"}">${x.st === 1 ? "IN" : "OUT"}</span> ${esc(x.name)}</h4><ul>${li.map((t) => `<li>${t}</li>`).join("")}</ul></div>`;
     }).join("") : "";
+  }
+
+  // ---------- one pot of money, cut into categories ----------
+  let lastRows = null;
+  const ORDER = N.map((_, i) => i).sort((a, b) => (D[D.length - 1].rows[b][6] || 0) - (D[D.length - 1].rows[a][6] || 0));
+  function drawPot() {
+    const box = $("#fl-pot"), rows = lastRows; if (!rows || rows[0].sh == null) { box.innerHTML = ""; return; }
+    const W = Math.max(300, box.clientWidth), GAPX = 2, UH = 10, BH = 54, BY = 30, cx = document.createElement("canvas").getContext("2d");
+    const seq = ORDER.map((i) => rows[i]), tot = seq.reduce((a, x) => a + x.sh, 0), utot = seq.reduce((a, x) => a + (x.sh - x.extra), 0);
+    cx.font = "600 13px system-ui, sans-serif";
+    const SHORT = { "Information Technology": "Technology", "Consumer Discretionary": "Discretionary", "Consumer Staples": "Staples", "Communication Services": "Communication" };
+    let x0 = 0, u0 = 0; const outside = [];
+        let segs = "", usual = "";
+    seq.forEach((s, k) => {
+      const w = (s.sh / tot) * W, uw = ((s.sh - s.extra) / utot) * W, cls = s.st === 1 ? "in" : s.st === -1 ? "out" : "plain";
+      const nm = SHORT[s.name] || s.name, num = String(Math.round(s.sh));
+      usual += `<rect x="${u0.toFixed(1)}" y="14" width="${Math.max(0.5, uw - GAPX).toFixed(1)}" height="${UH}" rx="2" class="u"/>`;
+      segs += `<rect data-k="${k}" x="${x0.toFixed(1)}" y="${BY}" width="${Math.max(1, w - GAPX).toFixed(1)}" height="${BH}" rx="4" class="s ${cls}"/>`;
+      cx.font = "600 12px system-ui, sans-serif";
+      const tw = cx.measureText(nm).width, c = x0 + (w - GAPX) / 2;
+      cx.font = "600 13px system-ui, sans-serif";
+      if (tw + 4 <= w - GAPX) segs += `<text x="${c.toFixed(1)}" y="${BY + 21}" text-anchor="middle" class="t in-lab ${cls}">${esc(nm)}</text><text x="${c.toFixed(1)}" y="${BY + 41}" text-anchor="middle" class="t n ${cls}">${num}</text>`;
+      else outside.push({ nm, num, cls, mid: c, tw: cx.measureText(nm + " " + num).width + 4 });
+      x0 += w; u0 += uw;
+    });
+    // names that do not fit inside go underneath as a staircase, so no line crosses a name
+    let H = BY + BH + 8, lv = 0, prev = -1e9;
+    outside.forEach((o) => {
+      const ex = Math.max(o.tw, o.mid);
+      lv = ex - o.tw > prev + 10 ? 0 : lv + 1; prev = ex;
+      const ty = BY + BH + 22 + lv * 19;
+      segs += `<line x1="${o.mid.toFixed(1)}" y1="${BY + BH}" x2="${o.mid.toFixed(1)}" y2="${ty + 4}" class="ld"/><text x="${(ex - 4).toFixed(1)}" y="${ty}" text-anchor="end" class="t out-lab ${o.cls}">${esc(o.nm)} <tspan class="n">${o.num}</tspan></text>`;
+      H = Math.max(H, ty + 10);
+    });
+    box.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="All money traded that day, cut into categories"><text x="0" y="9" class="cap">The usual split</text>${usual}${segs}</svg><p class="note" style="margin-top:2px">The number after each name: how many of every 100 dollars traded went to that category. Point at a piece to see more.</p>`;
+    const tip = document.getElementById("tip");
+    box.querySelectorAll("rect.s").forEach((el) => {
+      const s = seq[+el.dataset.k];
+      el.addEventListener("mousemove", (e) => {
+        if (!tip) return;
+        tip.innerHTML = `<b>${esc(s.name)}</b><div><span>Slice that day</span><span>${s.sh.toFixed(1)} of 100</span></div><div><span>Usual slice</span><span>${(s.sh - s.extra).toFixed(1)} of 100</span></div><div><span>Prices</span><span>${pct(s.move)}</span></div><div><span>Companies up</span><span>${s.up} of ${s.n}</span></div><div><span>Reading</span><span>${s.st === 1 ? "money came in" : s.st === -1 ? "money went out" : "normal day"}</span></div>`;
+        tip.hidden = false; tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 8, e.clientX + 14) + "px"; tip.style.top = e.clientY + 14 + "px";
+      });
+      el.addEventListener("mouseleave", () => { if (tip) tip.hidden = true; });
+    });
   }
 
   // ---------- the year strip ----------
@@ -149,7 +200,7 @@
       const tw = tip.offsetWidth; tip.style.left = Math.min(window.innerWidth - tw - 8, e.clientX + 14) + "px"; tip.style.top = e.clientY + 14 + "px";
     });
     cv.addEventListener("mouseleave", () => { if (tip) tip.hidden = true; });
-    window.addEventListener("resize", () => { if (!root.hidden && built) drawStrip(); });
+    window.addEventListener("resize", () => { if (!root.hidden && built) { drawStrip(); drawPot(); } });
   }
   function renderMonth() {
     const recent = D.slice(-21), cnt = N.map((nm, k) => ({ nm, i: recent.filter((d) => d.rows[k][5] === 1).length, o: recent.filter((d) => d.rows[k][5] === -1).length }));
