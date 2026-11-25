@@ -605,7 +605,8 @@
   const setKey = (k) => { try { k ? localStorage.setItem(KEY_NAME, k) : localStorage.removeItem(KEY_NAME); } catch (e) { /* ignore */ } };
   const toF = (s) => s.replace("-", "."), fromF = (s) => s.replace(".", "-");
   let ws = null, timer = null, idx = 0, pending = false;
-  const streamed = cos.slice().sort((a, b) => b.dv - a.dv).slice(0, 50).map((c) => c.s);
+  const fundSyms = (CELL.funds || []).map((f) => f.s);   // the 11 category funds get instant live prices first
+  const streamed = [...fundSyms, ...cos.slice().sort((a, b) => b.dv - a.dv).slice(0, 50 - fundSyms.length).map((c) => c.s)];
   const order = [...streamed, ...all.map((c) => c.s).filter((s) => !streamed.includes(s))];
   const refresh = () => { if (pending) return; pending = true; setTimeout(() => { pending = false; if (selected) renderCompany(); }, 1500); };
   function tick(sym, p, prevClose) {

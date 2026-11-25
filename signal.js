@@ -35,6 +35,7 @@
       <span>Every number here is counted from real closing prices (Yahoo Finance). Nothing on this line is a forecast.</span>
       <span><b>Thick line</b>: the middle company of that category.</span><span>Inside a category the most traded companies are on the left. Click a bar to open that company.</span>
       <span><b>5 years and Max</b> use today's list of companies. Companies that were removed are missing, and newer companies without the full history are left out, so long periods look better than they really were.</span>
+      <span><b>Category funds</b> (second line): each one is a real US fund holding that category's companies, with big companies counting more. When a fund and the line above disagree, a few giants moved differently from the rest. These US funds are not sold to private investors in Germany. Similar funds are (see your research report).</span>
       <span><b>\u20ac100 became</b>: 100 euros shared equally between all companies of that category at the start, and what they would be worth at the end. Counted from prices that include paid dividends (as if they were put back in). No fees, and no change between euro and dollar.</span></div>
     <p class="lead" id="sig-money" style="margin-top:8px"></p>`;
   const cv = box.querySelector("#sig"), wrap = box.querySelector("#sig-wrap");
@@ -43,9 +44,11 @@
   function val(c) {
     const base = c[PERIODS[period][1]], l = live[c.s];
     if (!l) return base;
-    if (period === "day") return l.pc ? l.p / l.pc - 1 : base;
+    if (period === "day") return l.pc ? l.p / l.pc - 1 : base;   // live day change needs the real previous close
     return base == null || !c.px ? base : (1 + base) * (l.p / c.px) - 1;
   }
+  const funds = C.funds || [], fundOf = {}; funds.forEach((f) => { fundOf[f.sec] = f; });
+  let fundHits = [], fromFund = {}, shownFund = {};
   const median = (a) => { const s = a.slice().sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
   const nice = (x) => { const steps = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 7.5, 10]; return steps.find((s) => s >= x) || 15; };
 
@@ -55,7 +58,7 @@
 
   function draw() {
     pending = false;
-    const W = Math.max(900, wrap.clientWidth), AX = 46, AMP = 96, Y = AMP + 14, H = Y + AMP + 92, dpr = window.devicePixelRatio || 1;
+    const W = Math.max(900, wrap.clientWidth), AX = 46, AMP = 96, Y = AMP + 14, FUND = funds.length ? 218 : 0, H = Y + AMP + 92 + FUND, dpr = window.devicePixelRatio || 1;
     cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px";
     const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
     const UP = css("--up"), DOWN = css("--down"), INK = css("--text-primary"), MUTED = css("--text-muted"), GRID = css("--grid");
@@ -103,6 +106,36 @@
       }
     });
     g.fillStyle = INK; g.fillRect(AX, Y - 1, W - AX, 2);   // the one straight line
+    if (FUND) {   // second line: one bar per category fund, same colours, same percent scale
+      const A2 = 50, T = Y + AMP + 92 + 6, Y2 = T + 34 + A2;
+      const fmax = Math.max(0.005, ...funds.map((f) => Math.abs(val(f) || 0))), cap2 = nice(fmax), s2 = A2 / cap2;   // the funds get their own percent scale, so their bars are easy to see
+      g.textAlign = "left"; g.textBaseline = "alphabetic"; g.font = "700 14px system-ui, sans-serif"; g.fillStyle = INK;
+      g.fillText("Category funds: each category bought as one basket (big companies count more)", AX, T + 18);
+      g.font = "12px system-ui, sans-serif"; g.textBaseline = "middle"; g.textAlign = "right";
+      [-1, 1].forEach((f) => { if (f * cap2 < -1) return; const y = Y2 - f * A2; g.fillStyle = GRID; g.fillRect(AX, y, W - AX, 1); g.fillStyle = MUTED; g.fillText(pct(f * cap2, cap2 < 0.1 ? 1 : 0), AX - 6, y); });
+      g.fillStyle = MUTED; g.fillText("0%", AX - 6, Y2);
+      fundHits = []; shownFund = {};
+      groups.forEach((grp, k) => {
+        const f = fundOf[grp.nm], x0 = AX + k * sw, cx = x0 + sw / 2;
+        g.fillStyle = MUTED; if (k > 0) g.fillRect(x0, Y2 - A2, 1, A2 * 2);
+        if (!f) return;
+        const v = val(f); if (v == null) return;
+        const target = Math.max(-cap2, Math.min(cap2, v)) * s2, start = fromFund[f.s] == null ? target : fromFund[f.s].px, px = start + (target - start) * ease;
+        const shownV = mix(fromFund[f.s] ? fromFund[f.s].v : null, v), bw = Math.min(46, sw * 0.42), h = Math.max(2, Math.abs(px)), up = px >= 0, top = up ? Y2 - h : Y2;
+        shownFund[f.s] = { px, v: shownV };
+        g.fillStyle = up ? UP : DOWN; g.fillRect(cx - bw / 2, top, bw, h);
+        if (Math.abs(v) > cap2 && k01 >= 1) { g.fillStyle = INK; g.fillRect(cx - bw / 2, up ? top - 3 : top + h + 1, bw, 2); }
+        const l = live[f.s], fresh = l && l.flash && now - l.flash < 900;
+        if (fresh || hover === f.s) { g.strokeStyle = INK; g.lineWidth = 1.5; g.strokeRect(cx - bw / 2 - 1.5, top - 1.5, bw + 3, h + 3); }
+        fundHits.push({ x: cx, half: bw / 2 + 4, y0: Y2 - A2, y1: Y2 + A2, f, v });
+        g.textAlign = "center"; g.textBaseline = "alphabetic";
+        g.font = "600 12.5px system-ui, sans-serif"; g.fillStyle = INK; g.fillText(f.s, cx, Y2 + A2 + 18);
+        g.font = "800 15px system-ui, sans-serif"; g.fillStyle = shownV >= 0 ? UP : DOWN; g.fillText(pct(shownV), cx, Y2 + A2 + 36);
+        g.font = "12px system-ui, sans-serif"; g.fillStyle = MUTED; g.fillText("\u20ac100 became", cx, Y2 + A2 + 51);
+        g.font = "800 14px system-ui, sans-serif"; g.fillStyle = shownV >= 0 ? UP : DOWN; g.fillText(eur(100 * (1 + shownV)), cx, Y2 + A2 + 66);
+      });
+      g.fillStyle = INK; g.fillRect(AX, Y2 - 1, W - AX, 2);
+    }
     lead(st);
   }
 
@@ -130,6 +163,9 @@
 
   function at(e) {
     const b = cv.getBoundingClientRect(), x = e.clientX - b.left; let best = null;
+    const y = e.clientY - b.top, fh = fundHits.find((h) => y >= h.y0 && y <= h.y1 && Math.abs(h.x - x) <= h.half);
+    if (fh) return { fund: true, c: fh.f, v: fh.v, x: fh.x, half: fh.half };
+    if (fundHits.length && y > fundHits[0].y0 - 40) return null;
     hits.forEach((h) => { const dx = Math.abs(h.x - x); if (dx <= h.half + 0.5 && (!best || dx < Math.abs(best.x - x))) best = h; });
     return best;
   }
@@ -138,16 +174,17 @@
     if (was !== hover) draw();
     cv.style.cursor = h ? "pointer" : "default";
     if (!h || !tip) { if (tip) tip.hidden = true; return; }
-    tip.innerHTML = `<b>${h.c.n} (${h.c.s})</b><div><span>${h.c.sec}</span><span></span></div><div><span>Price change, ${PERIODS[period][0].toLowerCase()}</span><span>${pct(h.v)}</span></div>` + (live[h.c.s] ? `<div><span>Live price</span><span>$${live[h.c.s].p.toFixed(2)}</span></div>` : "");
+    if (h.fund) tip.innerHTML = `<b>${h.c.s}: ${h.c.sec} fund</b><div><span>A US fund that holds this category's S&P 500 companies</span><span></span></div><div><span>Change, ${PERIODS[period][0].toLowerCase()}</span><span>${pct(h.v)}</span></div><div><span>Last close</span><span>$${h.c.px.toFixed(2)}</span></div>` + (live[h.c.s] ? `<div><span>Live price</span><span>$${live[h.c.s].p.toFixed(2)}</span></div>` : "");
+    else tip.innerHTML = `<b>${h.c.n} (${h.c.s})</b><div><span>${h.c.sec}</span><span></span></div><div><span>Price change, ${PERIODS[period][0].toLowerCase()}</span><span>${pct(h.v)}</span></div>` + (live[h.c.s] ? `<div><span>Live price</span><span>$${live[h.c.s].p.toFixed(2)}</span></div>` : "");
     tip.hidden = false; tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 8, e.clientX + 14) + "px"; tip.style.top = e.clientY + 14 + "px";
   });
   cv.addEventListener("mouseleave", () => { hover = null; if (tip) tip.hidden = true; draw(); });
-  cv.addEventListener("click", (e) => { const h = at(e); if (h && window.STOCKLAB_OPEN) { if (tip) tip.hidden = true; window.STOCKLAB_OPEN(h.c.s); } });
+  cv.addEventListener("click", (e) => { const h = at(e); if (h && !h.fund && window.STOCKLAB_OPEN) { if (tip) tip.hidden = true; window.STOCKLAB_OPEN(h.c.s); } });
   if (window.STOCKLAB_PERIOD) window.STOCKLAB_PERIOD.mount();
   window.addEventListener("stocklab-period", (e) => {   // the cell and the line always show the same period
     if (!PERIODS[e.detail.key]) return;
     from = {}; hits.forEach((h) => { from[h.c.s] = h.px; });   // glide from the old picture to the new one
-    fromSt = shownSt; GLIDE = e.detail.dur || 700;
+    fromSt = shownSt; fromFund = shownFund; GLIDE = e.detail.dur || 700;
     period = e.detail.key; hover = null; glide = performance.now(); money(); tween();
   });
   function tween() { draw(); if (performance.now() - glide < GLIDE) requestAnimationFrame(tween); }

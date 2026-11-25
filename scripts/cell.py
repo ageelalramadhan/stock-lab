@@ -498,6 +498,39 @@ def today_summary(frames, sector_of):
             "sectors": sorted(sectors, key=lambda x: -(x["move"] or 0)), "movers": movers}
 
 
+# ---------------- category funds: one fund per category, holding that category's S&P 500 companies ----------------
+
+FUNDS = {"XLK": "Information Technology", "XLF": "Financials", "XLV": "Health Care", "XLY": "Consumer Discretionary",
+         "XLP": "Consumer Staples", "XLE": "Energy", "XLI": "Industrials", "XLB": "Materials", "XLU": "Utilities",
+         "XLRE": "Real Estate", "XLC": "Communication Services"}
+
+
+def fund_rows(fund_frames, today, first_day):
+    """The same time periods as for the companies, counted from each fund's own closing prices."""
+    rows = []
+    for sym, sector in FUNDS.items():
+        df = fund_frames.get(sym)
+        if df is None:
+            continue
+        c = df["Close"][df.index <= today]
+        if len(c) < 3:
+            continue
+
+        def back(n):
+            return r(c.iloc[-1] / c.iloc[-1 - n] - 1, 6) if len(c) > n else None
+
+        def cal(**ago):
+            before = c[c.index <= today - pd.DateOffset(**ago)]
+            return r(c.iloc[-1] / before.iloc[-1] - 1, 6) if len(before) else None
+
+        before_year = c[c.index.year < today.year]
+        rows.append({"s": sym, "sec": sector, "px": r(c.iloc[-1], 2), "d1": back(1), "w1": back(5),
+                     "c1m": cal(months=1), "c6m": cal(months=6), "c1y": cal(years=1), "c5y": cal(years=5),
+                     "ytd": r(c.iloc[-1] / before_year.iloc[-1] - 1, 6) if len(before_year) else None,
+                     "mx": r(c.iloc[-1] / c.iloc[0] - 1, 6) if c.index[0] <= first_day + pd.Timedelta(days=7) else None})
+    return rows
+
+
 # ---------------- where the trading goes (category money report) ----------------
 
 FLOW_DAYS = 252     # days kept in the daily record (about one year)
@@ -987,6 +1020,11 @@ def main():
                        "news": tnews[s]["top"][0].get("news")} for s in tday["movers"]]
     today = dates[-1]
     first_day = min(df.index[0] for df in frames.values())
+    try:
+        funds = fund_rows(download_all(list(FUNDS)), today, first_day)
+    except Exception as e:   # the funds are an extra: never let them stop the nightly run
+        print("Category funds skipped:", e); funds = []
+    print(f"Category funds: {len(funds)} of {len(FUNDS)}")
     mom_now = full.sort_values("date").groupby("symbol")["mom_12_1"].last()
     cells = []
     for s, df in frames.items():
@@ -1074,7 +1112,7 @@ def main():
             f.unlink()
 
     out = {"generated": run_date, "horizon_days": H, "data_through": today.strftime("%Y-%m-%d"),
-           "universe_size": len(cells), "history_from": first_day.strftime("%Y-%m-%d"), "ranked": int(len(latest)), "tentacles": tentacles,
+           "universe_size": len(cells), "history_from": first_day.strftime("%Y-%m-%d"), "funds": funds, "ranked": int(len(latest)), "tentacles": tentacles,
            "snapshots": int(len(train)), "inputs": [LABELS[c] for c in cols], "test": test, "importance": importance, "baskets": baskets,
            "basket_size": BASKET, "today": tday, "odds": odds, "paper_live": live_paper, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
            "runtime_min": round((time.time() - t0) / 60, 1)}
