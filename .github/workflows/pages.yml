@@ -30,7 +30,7 @@ jobs:
       - name: Keep only the site files
         run: |
           mkdir _site
-          cp -r index.html app.js play.js style.css lib data _site/
+          cp -r index.html app.js play.js money.js style.css lib data _site/
           rm -f _site/data/*.csv
           rm -rf _site/data/archive
           touch _site/.nojekyll

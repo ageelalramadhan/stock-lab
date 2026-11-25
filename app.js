@@ -564,11 +564,12 @@
 
   // ---------- views ----------
   function show(v) {
-    ["cell", "play", "track"].forEach((k) => ($("#" + k + "-view").hidden = v !== k));
+    ["cell", "play", "flow", "track"].forEach((k) => ($("#" + k + "-view").hidden = v !== k));
     document.querySelectorAll("#view-seg button").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
     if (v === "cell") layout();
     if (v === "track") renderTrack();
     if (v === "play") window.dispatchEvent(new Event("stocklab-play"));
+    if (v === "flow") window.dispatchEvent(new Event("stocklab-flow"));
   }
   $("#view-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) show(b.dataset.view); });
   window.STOCKLAB_OPEN = (sym) => { show("cell"); select(sym); window.scrollTo({ top: 0 }); };

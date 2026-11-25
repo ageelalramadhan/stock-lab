@@ -498,6 +498,95 @@ def today_summary(frames, sector_of):
             "sectors": sorted(sectors, key=lambda x: -(x["move"] or 0)), "movers": movers}
 
 
+# ---------------- where the trading goes (category money report) ----------------
+
+FLOW_DAYS = 252     # days kept in the daily record (about one year)
+FLOW_USUAL = 60     # "usual" = the 60 trading days before
+FLOW_Z = 1.0        # "more than usual" = above the usual share by more than its normal daily wobble
+
+
+def build_flows(frames, sector_of):
+    """Each day: every category's share of all money traded, compared with its usual share, plus price direction.
+    IN = bigger share than usual and prices rose. OUT = bigger share than usual and prices fell.
+    Everything here is counted from daily prices and volumes. Who traded is not in the data."""
+    syms = [s for s in frames if s not in NOT_RANKED and sector_of.get(s, "Other") != "Benchmark"]
+    close = pd.DataFrame({s: frames[s]["Close"] for s in syms}).sort_index()
+    dv = (close * pd.DataFrame({s: frames[s]["Volume"] for s in syms}).sort_index()).fillna(0.0)
+    ret = close.pct_change(fill_method=None)
+    sec = pd.Series({s: sector_of.get(s, "Other") for s in syms})
+    names = sorted(sec.unique())
+    cols = {k: list(sec[sec == k].index) for k in names}
+
+    sec_dv = pd.DataFrame({k: dv[cols[k]].sum(axis=1) for k in names})
+    total = sec_dv.sum(axis=1)
+    share = sec_dv.div(total, axis=0)
+    usual = share.rolling(FLOW_USUAL).mean().shift(1)
+    wobble = share.rolling(FLOW_USUAL).std().shift(1)
+    z = (share - usual) / wobble
+    move = pd.DataFrame({k: ret[cols[k]].median(axis=1) for k in names})
+    ups = pd.DataFrame({k: (ret[cols[k]] > 0).sum(axis=1) for k in names})
+    cnt = pd.DataFrame({k: ret[cols[k]].notna().sum(axis=1) for k in names})
+    mkt = ret.median(axis=1)
+    state = pd.DataFrame(0, index=share.index, columns=names)
+    state[(z >= FLOW_Z) & (move > 0)] = 1
+    state[(z >= FLOW_Z) & (move < 0)] = -1
+    usual_dv = dv.rolling(FLOW_USUAL).mean().shift(1)
+    usual_total = total.rolling(FLOW_USUAL).mean().shift(1)
+
+    # what happened afterwards (all history we have), compared with the typical company
+    idx = (1 + move.fillna(0)).cumprod()
+    midx = (1 + mkt.fillna(0)).cumprod()
+    valid = z.notna()
+    outcomes = {}
+    for h in (5, 21):
+        fwd = idx.shift(-h) / idx - 1
+        rel = fwd.sub(midx.shift(-h) / midx - 1, axis=0)
+        ok = valid & fwd.notna()
+
+        def stat(mask):
+            m = mask.to_numpy()
+            f, rl = pd.Series(fwd.to_numpy()[m]), pd.Series(rel.to_numpy()[m])
+            n = int(len(f))
+            return {"n": n, "higher": int((f > 0).sum()), "beat": int((rl > 0).sum()),
+                    "avg": r(f.mean()) if n else None, "rel": r(rl.mean()) if n else None}
+
+        per = {}
+        for k in names:
+            def one(mask, k=k):
+                f, rl = fwd[k][mask], rel[k][mask]
+                return {"n": int(len(f)), "higher": int((f > 0).sum()), "beat": int((rl > 0).sum()),
+                        "avg": r(f.mean()) if len(f) else None, "rel": r(rl.mean()) if len(f) else None}
+            per[k] = {"in": one(ok[k] & (state[k] == 1)), "out": one(ok[k] & (state[k] == -1)), "any": one(ok[k])}
+        outcomes[str(h)] = {"in": stat(ok & (state == 1)), "out": stat(ok & (state == -1)), "any": stat(ok), "per": per}
+
+    days = []
+    for d in share.index[valid.all(axis=1)][-FLOW_DAYS:]:
+        extra = (share.loc[d] - usual.loc[d]) * 100          # percentage points of all money traded
+        gain = extra[extra > 0]
+        rows, clues = [], {}
+        for k in names:
+            st = int(state.at[d, k])
+            rows.append([r(extra[k], 2), r(z.at[d, k], 1), r(move.at[d, k]), int(ups.at[d, k]), int(cnt.at[d, k]), st])
+            if st == 0:
+                continue
+            c = cols[k]
+            today_dv, base = dv.loc[d, c], usual_dv.loc[d, c]
+            big = list(base.sort_values(ascending=False).index[:5])
+            more = (today_dv - base).clip(lower=0)
+            top = more.idxmax() if more.sum() > 0 else None
+            clues[k] = {"big_now": r(today_dv[big].sum() / today_dv.sum(), 3) if today_dv.sum() > 0 else None,
+                        "big_usual": r(base[big].sum() / base.sum(), 3) if base.sum() > 0 else None,
+                        "top": top, "top_share": r(more[top] / more.sum(), 3) if top else None,
+                        "top_move": r(ret.at[d, top]) if top else None}
+        days.append({"d": d.strftime("%Y-%m-%d"), "mk": r(mkt[d]), "tot": r(total[d] / 1e9, 1),
+                     "tot_usual": r(usual_total[d] / 1e9, 1),
+                     "shift": r(gain.sum(), 2), "lead": r(gain.max() / gain.sum(), 2) if gain.sum() > 0 else None,
+                     "rows": rows, "clues": clues})
+    return {"names": names, "usual_days": FLOW_USUAL, "z": FLOW_Z, "days": days, "outcomes": outcomes,
+            "history_from": share.index[valid.all(axis=1)][0].strftime("%Y-%m-%d") if valid.all(axis=1).any() else None,
+            "typical_shift": r(float(np.median([x["shift"] for x in days])), 2) if days else None}
+
+
 # ---------------- prediction game ----------------
 
 GAME_ROUNDS = 300
@@ -981,6 +1070,10 @@ def main():
            "basket_size": BASKET, "today": tday, "odds": odds, "paper_live": live_paper, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
            "runtime_min": round((time.time() - t0) / 60, 1)}
     write_js(DATA / "cell.js", "window.CELL=", out)
+    flows = build_flows(frames, {s: meta[s]["sector"] for s in frames})
+    flows["generated"] = run_date
+    write_js(DATA / "flows.js", "window.FLOWS=", flows)
+    print(f"Flows: {len(flows['days'])} days, {flows['outcomes']['21']['in']['n']} in-days and {flows['outcomes']['21']['out']['n']} out-days with a known month after")
     game = build_game(obs, full, frames, meta, latest, dates)
     game["generated"] = run_date
     write_js(DATA / "game.js", "window.GAME=", game)
