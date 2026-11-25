@@ -22,11 +22,12 @@
   const names = Array.from(new Set(cells.map((c) => c.sec))).sort();
   const groups = names.map((nm) => ({ nm, list: cells.filter((c) => c.sec === nm).sort((a, b) => (b.dv || 0) - (a.dv || 0)) }));
   const live = {};
-  let period = "day", hits = [], hover = null, pending = false;
+  const GLIDE = 700;
+  let period = "day", hits = [], hover = null, pending = false, from = {}, glide = -1e9;
 
   box.innerHTML = `<div class="sig-head"><div><h2>The signal: how every company moved</h2>
       <p class="lead" id="sig-lead"></p></div>
-      <div class="seg" id="sig-seg">${Object.keys(PERIODS).map((k) => `<button data-p="${k}">${PERIODS[k][0]}</button>`).join("")}</div></div>
+      <div class="period-bar" id="sig-period"></div></div>
     <div id="sig-wrap"><canvas id="sig"></canvas></div>
     <div class="sig-key"><span><b>Each thin bar is one company.</b> Up and green: its price rose. Down and red: it fell. Longer: a bigger change in percent.</span>
       <span><b>Thick line</b>: the middle company of that category.</span><span>Inside a category the most traded companies are on the left. Click a bar to open that company.</span>
@@ -62,16 +63,19 @@
     [-1, -0.5, 0.5, 1].forEach((f) => { if (f * cap < -1) return; const y = Y - f * AMP; g.fillStyle = GRID; g.fillRect(AX, y, W - AX, 1); g.fillStyle = MUTED; g.fillText(pct(f * cap, cap < 0.1 ? 1 : 0), AX - 6, y); });
     g.fillStyle = MUTED; g.fillText("0%", AX - 6, Y);
     hits = [];
+    const k01 = Math.min(1, (now - glide) / GLIDE), ease = 1 - Math.pow(1 - k01, 3);
     groups.forEach((grp, k) => {
       const x0 = AX + k * sw, pad = 7, step = (sw - pad * 2) / grp.list.length, bw = Math.max(1, step - (step > 3 ? 1 : 0.3));
       grp.list.forEach((c, j) => {
         const v = val(c); if (v == null) return;
-        const cx = x0 + pad + step * (j + 0.5), over = Math.abs(v) > cap, h = Math.max(1.5, Math.min(Math.abs(v), cap) * sy), up = v >= 0, top = up ? Y - h : Y;
+        const cx = x0 + pad + step * (j + 0.5), over = Math.abs(v) > cap && k01 >= 1;
+        const target = Math.max(-cap, Math.min(cap, v)) * sy, start = from[c.s] == null ? target : from[c.s], px = start + (target - start) * ease;   // signed height in pixels
+        const h = Math.max(1.5, Math.abs(px)), up = px >= 0, top = up ? Y - h : Y;
         g.fillStyle = up ? UP : DOWN; g.fillRect(cx - bw / 2, top, bw, h);
         if (over) { g.fillStyle = INK; g.fillRect(cx - bw / 2, up ? top - 3 : top + h + 1, bw, 2); }   // goes beyond the picture
         const l = live[c.s], fresh = l && l.flash && now - l.flash < 900, hov = hover === c.s;
         if (fresh || hov) { g.strokeStyle = INK; g.lineWidth = 1.5; g.strokeRect(cx - bw / 2 - 1.5, top - 1.5, bw + 3, h + 3); }
-        hits.push({ x: cx, half: Math.max(step / 2, 1.5), c, v });
+        hits.push({ x: cx, half: Math.max(step / 2, 1.5), c, v, px });
       });
       const s = st[k];
       if (s.med != null) {   // the middle company of the category
@@ -101,7 +105,6 @@
     box.querySelector("#sig-lead").innerHTML = `<b>${up} of ${n}</b> companies went up ${P[2]}. Strongest category: <b>${ok[0].nm}</b> (<b class="${ok[0].med >= 0 ? "up" : "down"}">${pct(ok[0].med)}</b>). Weakest: <b>${ok[ok.length - 1].nm}</b> (<b class="${ok[ok.length - 1].med >= 0 ? "up" : "down"}">${pct(ok[ok.length - 1].med)}</b>).`
       + ` \u20ac100 split over all ${n} companies became <b class="${allEur >= 100 ? "up" : "down"}">${eur(allEur)}</b>.`
       + (liveN ? ` <span class="count">live prices in ${liveN} companies</span>` : "");
-    box.querySelectorAll("#sig-seg button").forEach((b) => b.classList.toggle("on", b.dataset.p === period));
   }
 
   // where the trading went in the same period (counted from the nightly money report)
@@ -132,7 +135,13 @@
   });
   cv.addEventListener("mouseleave", () => { hover = null; if (tip) tip.hidden = true; draw(); });
   cv.addEventListener("click", (e) => { const h = at(e); if (h && window.STOCKLAB_OPEN) { if (tip) tip.hidden = true; window.STOCKLAB_OPEN(h.c.s); } });
-  box.querySelector("#sig-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { period = b.dataset.p; hover = null; draw(); money(); } });
+  if (window.STOCKLAB_PERIOD) window.STOCKLAB_PERIOD.mount();
+  window.addEventListener("stocklab-period", (e) => {   // the cell and the line always show the same period
+    if (!PERIODS[e.detail.key]) return;
+    from = {}; hits.forEach((h) => { from[h.c.s] = h.px; });   // glide from the old picture to the new one
+    period = e.detail.key; hover = null; glide = performance.now(); money(); tween();
+  });
+  function tween() { draw(); if (performance.now() - glide < GLIDE) requestAnimationFrame(tween); }
   window.addEventListener("resize", () => { if (cv.offsetParent) draw(); });
   window.addEventListener("stocklab-cell", () => draw());
   const later = (ms) => { if (!pending) { pending = true; setTimeout(draw, ms); } };

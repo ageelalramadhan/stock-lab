@@ -29,7 +29,20 @@
   const dayName = (d) => (d ? new Date(d + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }) : "the last day");
   const lean = (p) => (p >= 0.6 ? "Probably more" : p >= 0.55 ? "A little more likely than not" : p > 0.45 ? "About a coin flip" : p > 0.4 ? "A little less likely than not" : "Probably less");
   const price = (c) => (live[c.s] && live[c.s].price) || c.px;
-  const dayMove = (c) => { const l = live[c.s]; return l && l.price && l.prevClose ? l.price / l.prevClose - 1 : c.d1; };
+  // the time period the cell and the signal line show. key, button, data field, longest line (as a change), words, short label
+  const PERIODS = [
+    ["day", "1 day", "d1", 0.06, "on the last trading day", "last day"], ["week", "5 days", "w1", 0.1, "over the last 5 trading days", "last 5 days"],
+    ["month", "1 month", "m1", 0.2, "over the last month", "last month"], ["half", "6 months", "h1", 0.4, "over the last 6 months", "last 6 months"],
+    ["ytd", "This year", "ytd", 0.5, "since 1 January", "this year"], ["year", "1 year", "y1", 0.6, "over the last year", "last year"],
+    ["five", "5 years", "y5", 2, "over the last 5 years", "last 5 years"], ["max", "Max", "mx", 4, "in all the history we store", "all history"],
+  ];
+  let PER = PERIODS[0];
+  const dayMove = (c) => {   // the company's change for the chosen period. A live price, if one has arrived, replaces last night's price.
+    const l = live[c.s];
+    if (PER[2] === "d1") return l && l.price && l.prevClose ? l.price / l.prevClose - 1 : c.d1;
+    const base = c[PER[2]];
+    return base == null || !l || !l.price || !c.px ? base : (1 + base) * (l.price / c.px) - 1;
+  };
   const dayCol = (x) => (x == null || Math.abs(x) < 0.002 ? FLAT : x > 0 ? UP : DOWN);
   const chip = (x, label) => `<span class="chip ${x == null || Math.abs(x) < 0.002 ? "flat" : x > 0 ? "up" : "down"}">${x == null || Math.abs(x) < 0.002 ? "=" : x > 0 ? "+" : "−"} ${label || (Math.abs(x || 0) * 100).toFixed(1) + "%"}</span>`;
 
@@ -62,6 +75,7 @@
     s.word = s.ratio >= 1.15 ? "busier than usual" : s.ratio <= 0.87 ? "quieter than usual" : "a usual day";
     s.ups = s.list.filter((c) => (c.d1 || 0) > 0).length;
     s.downs = s.list.filter((c) => (c.d1 || 0) < 0).length;
+    s.known = s.list.filter((c) => c.d1 != null).length;
     s.ticks = []; s.pulse = 0; s.dir = 0; s.flip = 0;
   });
   const GAP = 0.035, total = cos.length;
@@ -98,14 +112,13 @@
       // beat lines as they will be drawn: sample points along each one
       const pts = [];
       nodes.forEach((n) => {
-        const mv = n.c.d1; if (mv == null) return;
-        const r0 = edgeAt(n.ang, 0) + 4, len = 2 + Math.min(1, Math.abs(mv) / 0.06) * R * 0.085 + 10;   // +10: room for a live flash
+        const r0 = edgeAt(n.ang, 0) + 4, len = 2 + R * 0.085 + 10;   // the longest a line can get, so names never cover a line in any period   // +10: room for a live flash
         for (let k = 0; k <= 4; k++) pts.push([CX + Math.cos(n.ang) * (r0 + len * k / 4), CY + Math.sin(n.ang) * (r0 + len * k / 4)]);
       });
       let needX = 0, needY = 0;
       const placed = [];
       secs.forEach((s) => {
-        s.sub = `${s.ups} of ${s.list.length} went up`;
+        s.sub = `${s.ups} of ${s.known} went up`;
         const words = s.name.split(" ");
         s.lines = words.length > 1 && s.name.length > 13 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [s.name];
         ctx.font = "700 13px " + FONT;
@@ -192,7 +205,7 @@
         const mv = dayMove(n.c), l = live[n.c.s];
         if (mv == null) return;
         const flash = l && l.pulse ? Math.max(0, 1 - (now - l.pulse) / 900) : 0;
-        const r0 = edgeAt(n.ang, t) + 4, len = 2 + Math.min(1, Math.abs(mv) / 0.06) * R * 0.085 + flash * 8;
+        const r0 = edgeAt(n.ang, t) + 4, len = 2 + Math.min(1, Math.abs(mv) / PER[3]) * R * 0.085 + flash * 8;
         n.l0 = r0; n.l1 = r0 + len;   // remembered so the line can be hovered and clicked
         const cos = Math.cos(n.ang), sin = Math.sin(n.ang), mine = n === hover || n.c.s === selected;
         ctx.lineCap = "round";
@@ -234,7 +247,7 @@
         s.lines.forEach((ln, i) => ctx.fillText(ln, x, y - h / 2 + 17 + i * 15));
         ctx.font = "600 12px " + FONT; ctx.fillStyle = SEC;
         const yb = y + h / 2 - 8 - (s.liveLine ? 15 : 0);
-        [[`${s.ups} of ${s.list.length} went up`, UP, yb - 15], [`${s.downs} of ${s.list.length} went down`, DOWN, yb]].forEach(([txt, col, ty]) => {
+        [[`${s.ups} of ${s.known} went up`, UP, yb - 15], [`${s.downs} of ${s.known} went down`, DOWN, yb]].forEach(([txt, col, ty]) => {
           const tw = ctx.measureText(txt).width;
           ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x - tw / 2 - 7, ty - 4, 4, 0, Math.PI * 2); ctx.fill();   // a coloured dot in front of each count
           ctx.fillStyle = SEC; ctx.fillText(txt, x + 4, ty);
@@ -353,7 +366,7 @@
     const c = hover.c;
     tipEl.innerHTML = `<div class="tip-row">${c.lg ? `<img src="${esc(c.lg)}" alt="">` : ""}<b>${esc(c.n)}</b></div>
       <div><span>Worth more next month?</span><span>${n100(c.p)} out of 100</span></div>
-      <div><span>Last day</span><span>${chip(dayMove(c))}</span></div>`;
+      <div><span>${PER[5][0].toUpperCase() + PER[5].slice(1)}</span><span>${chip(dayMove(c))}</span></div>`;
     let x = e.clientX + 16; if (x + 270 > window.innerWidth) x -= 290;
     tipEl.style.left = x + "px"; tipEl.style.top = e.clientY + 16 + "px"; tipEl.hidden = false;
   });
@@ -361,12 +374,14 @@
   canvas.addEventListener("click", (e) => { const n = nodeAt(e); if (n) select(n.c.s); });
   window.addEventListener("resize", layout);
 
-  (function lead() {
-    const up = cos.filter((c) => (c.d1 || 0) > 0).length;
-    $("#cell-lead").innerHTML = `There are <b>${cos.length}</b> big companies here. On ${dayName(TD.date)}, <b class="up">${up} went up</b> and <b class="down">${cos.length - up} went down</b>.
+  function lead() {
+    const vals = cos.map(dayMove).filter((x) => x != null), up = vals.filter((x) => x > 0).length;
+    const when = PER[0] === "day" ? "On " + dayName(TD.date) : PER[4][0].toUpperCase() + PER[4].slice(1);
+    $("#cell-lead").innerHTML = `There are <b>${cos.length}</b> big companies here. ${when}, <b class="up">${up} went up</b> and <b class="down">${vals.length - up} went down</b>.
       For a normal company, the chance to be worth more next month is <b>${n100(P_MID)} out of 100</b>. Tap any bubble to see why.`;
     $("#updated").textContent = `Updated ${CELL.generated}. Prices up to ${CELL.data_through}. It updates itself every weekday night.`;
-  })();
+  }
+  lead();
 
   // is the New York stock exchange open right now? (Monday to Friday, 9:30 to 16:00 New York time, except holidays)
   // days the New York Stock Exchange is closed (2026 and 2027)
@@ -383,7 +398,7 @@
     $("#market-note").innerHTML = open
       ? (key ? '<span class="chip up">open</span> The market is open. A ring flashes each time a new price arrives.'
              : '<span class="chip up">open</span> The market is open. Add a key under "Live prices" to see rings flash with each new price.')
-      : `<span class="chip flat">closed</span> The market is closed right now. The rings show what happened on the last day. ${key ? "Your live connection stays on, so any early or late trading will still flash. " : ""}It opens Monday to Friday at about ${opensAt} your time.`;
+      : `<span class="chip flat">closed</span> The market is closed right now. The rings show what happened in the time you picked. ${key ? "Your live connection stays on, so any early or late trading will still flash. " : ""}It opens Monday to Friday at about ${opensAt} your time.`;
   }
 
   // dark or light: remembered in this browser
@@ -484,7 +499,7 @@
     ini.textContent = c.s.slice(0, 4);
     if (c.lg) { lg.onerror = () => { lg.hidden = true; ini.hidden = false; }; lg.src = c.lg; lg.hidden = false; ini.hidden = true; } else { lg.hidden = true; ini.hidden = false; }
     $("#co-price").textContent = money(price(c));
-    $("#co-change").innerHTML = chip(dayMove(c)) + ' <span class="muted small">last day</span>';
+    $("#co-change").innerHTML = chip(dayMove(c)) + ' <span class="muted small">' + PER[5] + '</span>';
     renderExplain(c);
     if (c.p == null) {
       $("#ch-num").textContent = "?"; $("#ch-word").textContent = ""; $("#ch-mark").style.left = "50%"; $("#ch-range").textContent = "";
@@ -672,10 +687,48 @@
       while (s.ticks.length && s.ticks[0] < cut) s.ticks.shift();
       const ups = s.list.filter((c) => (dayMove(c) || 0) > 0).length;
       s.downs = s.list.filter((c) => (dayMove(c) || 0) < 0).length;
+      s.known = s.list.filter((c) => dayMove(c) != null).length;
       if ((ups * 2 >= s.list.length) !== (s.ups * 2 >= s.list.length)) s.flip = performance.now();   // the group just switched between mostly up and mostly down
       s.ups = ups;
     });
   }, 1000);
+  // ---------- one time period for the cell and the signal line, with a play button ----------
+  const STEP_MS = 1800, ORDER = ["max", "five", "year", "ytd", "half", "month", "week", "day"];
+  let playTimer = null;
+  function setPeriod(key, fromPlay) {
+    const p = PERIODS.find((x) => x[0] === key); if (!p) return;
+    if (!fromPlay) stopPlay();
+    PER = p;
+    secs.forEach((s) => { s.ups = s.list.filter((c) => (dayMove(c) || 0) > 0).length; s.downs = s.list.filter((c) => (dayMove(c) || 0) < 0).length; s.known = s.list.filter((c) => dayMove(c) != null).length; s.flip = 0; });
+    lead(); if (selected) refresh();
+    paintBars();
+    window.dispatchEvent(new CustomEvent("stocklab-period", { detail: { key: key } }));
+  }
+  function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; } paintBars(); }
+  function play() {
+    if (playTimer) { stopPlay(); return; }
+    let i = PER[0] === "day" ? 0 : Math.max(0, ORDER.indexOf(PER[0]));   // start from Max, or carry on from where it was paused
+    setPeriod(ORDER[i], true);
+    playTimer = setInterval(() => { i++; if (i >= ORDER.length) { stopPlay(); return; } setPeriod(ORDER[i], true); }, STEP_MS);
+    paintBars();
+  }
+  function paintBars() {
+    document.querySelectorAll(".period-bar").forEach((el) => {
+      el.querySelectorAll("button[data-p]").forEach((b) => b.classList.toggle("on", b.dataset.p === PER[0]));
+      const pb = el.querySelector(".play"); if (pb) { pb.textContent = playTimer ? "Pause" : "Play: Max to 1 day"; pb.classList.toggle("primary", !!playTimer); }
+    });
+  }
+  function mountBars() {
+    document.querySelectorAll(".period-bar").forEach((el) => {
+      if (el.dataset.ready) return; el.dataset.ready = "1";
+      el.innerHTML = `<div class="seg">${PERIODS.map((p) => `<button data-p="${p[0]}">${p[1]}</button>`).join("")}</div><button class="btn play"></button>`;
+      el.addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; if (b.classList.contains("play")) play(); else setPeriod(b.dataset.p); });
+    });
+    paintBars();
+  }
+  window.STOCKLAB_PERIOD = { get: () => PER[0], set: setPeriod, mount: mountBars, stepMs: STEP_MS };
+  mountBars();
+
   const dlg = $("#key-dialog");
   $("#key-btn").addEventListener("click", () => { $("#key-input").value = getKey(); dlg.showModal(); });
   dlg.addEventListener("close", () => { if (dlg.returnValue === "save") setKey($("#key-input").value.trim()); if (dlg.returnValue === "clear") setKey(""); connect(); });
