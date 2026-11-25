@@ -986,6 +986,7 @@ def main():
                        "cause": per[s]["cause"], "sector": r(per[s]["sector"]), "vx": r(per[s]["vx"], 1),
                        "news": tnews[s]["top"][0].get("news")} for s in tday["movers"]]
     today = dates[-1]
+    first_day = min(df.index[0] for df in frames.values())
     mom_now = full.sort_values("date").groupby("symbol")["mom_12_1"].last()
     cells = []
     for s, df in frames.items():
@@ -1002,6 +1003,9 @@ def main():
         def chg(n):
             return r(c.iloc[-1] / c.iloc[-1 - n] - 1) if len(c) > n else None
         ytd = c[c.index.year == today.year]
+        before_year = c[c.index.year < today.year]
+        ytd_chg = r(c.iloc[-1] / before_year.iloc[-1] - 1) if len(before_year) and len(ytd) else None
+        max_chg = r(c.iloc[-1] / c.iloc[0] - 1) if c.index[0] <= first_day + pd.Timedelta(days=7) else None   # only companies with the full history
         score = float(L["score"]) if L is not None else None
 
         # band: brain's expected edge vs. the market, plus the stock's own typical swing
@@ -1049,7 +1053,7 @@ def main():
         }
         write_js(STOCK_DIR / f"{s}.js", f"window.STOCK_DETAIL=window.STOCK_DETAIL||{{}};window.STOCK_DETAIL[{json.dumps(s)}]=", detail)
         cells.append({"s": s, "n": m["name"], "sec": m["sector"], "px": r(last_close, 2), "d1": chg(1),
-                      "m1": chg(21), "w1": chg(5), "y1": chg(252), "dv": round(float((c * df["Volume"]).iloc[-60:].mean()) / 1e6, 1),
+                      "m1": chg(21), "w1": chg(5), "h1": chg(126), "ytd": ytd_chg, "y1": chg(252), "y5": chg(1260), "mx": max_chg, "dv": round(float((c * df["Volume"]).iloc[-60:].mean()) / 1e6, 1),
                       "rk": int(L["rank"]) if L is not None else None, "pct": r(L["pct"], 3) if L is not None else None,
                       "sc": r(score), "mom": r(mom_now.get(s)),
                       "en": next_e, "es": r(last_e["surprise"]) if last_e is not None else None,
@@ -1065,7 +1069,7 @@ def main():
             f.unlink()
 
     out = {"generated": run_date, "horizon_days": H, "data_through": today.strftime("%Y-%m-%d"),
-           "universe_size": len(cells), "ranked": int(len(latest)), "tentacles": tentacles,
+           "universe_size": len(cells), "history_from": first_day.strftime("%Y-%m-%d"), "ranked": int(len(latest)), "tentacles": tentacles,
            "snapshots": int(len(train)), "inputs": [LABELS[c] for c in cols], "test": test, "importance": importance, "baskets": baskets,
            "basket_size": BASKET, "today": tday, "odds": odds, "paper_live": live_paper, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
            "runtime_min": round((time.time() - t0) / 60, 1)}

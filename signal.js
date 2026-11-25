@@ -8,7 +8,16 @@
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const pct = (x, d) => (x >= 0 ? "+" : "") + (x * 100).toFixed(d == null ? 1 : d) + "%";
   const eur = (x) => "\u20ac" + x.toFixed(2);
-  const PERIODS = { day: ["Day", "d1", "on the last trading day", 1], week: ["Week", "w1", "over the last 5 trading days", 5], month: ["Month", "m1", "over the last 21 trading days", 21], year: ["Year", "y1", "over the last year", 252] };
+  const FD = F && F.days ? F.days : [], lastDay = C.data_through || "", yr = lastDay.slice(0, 4);
+  const since = C.history_from ? new Date(C.history_from + "T12:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : "the start of our data";
+  // [button, data field, words, trading days of the money record to count]
+  const PERIODS = {
+    day: ["1 day", "d1", "on the last trading day", 1], week: ["5 days", "w1", "over the last 5 trading days", 5],
+    month: ["1 month", "m1", "over the last month", 21], half: ["6 months", "h1", "over the last 6 months", 126],
+    ytd: ["This year", "ytd", "since 1 January " + yr + " (YTD, year to date)", FD.filter((d) => d.d.slice(0, 4) === yr).length || 1],
+    year: ["1 year", "y1", "over the last year", 252], five: ["5 years", "y5", "over the last 5 years", 1260],
+    max: ["Max", "mx", "since " + since + " (all the history we store)", 99999],
+  };
   const cells = C.cells.filter((c) => c.sec !== "Benchmark");
   const names = Array.from(new Set(cells.map((c) => c.sec))).sort();
   const groups = names.map((nm) => ({ nm, list: cells.filter((c) => c.sec === nm).sort((a, b) => (b.dv || 0) - (a.dv || 0)) }));
@@ -21,6 +30,7 @@
     <div id="sig-wrap"><canvas id="sig"></canvas></div>
     <div class="sig-key"><span><b>Each thin bar is one company.</b> Up and green: its price rose. Down and red: it fell. Longer: a bigger change in percent.</span>
       <span><b>Thick line</b>: the middle company of that category.</span><span>Inside a category the most traded companies are on the left. Click a bar to open that company.</span>
+      <span><b>5 years and Max</b> use today's list of companies. Companies that were removed are missing, and newer companies without the full history are left out, so long periods look better than they really were.</span>
       <span><b>\u20ac100 became</b>: 100 euros shared equally between all companies of that category at the start, and what they would be worth at the end. Price changes only: no fees, and no change between euro and dollar.</span></div>
     <p class="lead" id="sig-money" style="margin-top:8px"></p>`;
   const cv = box.querySelector("#sig"), wrap = box.querySelector("#sig-wrap");
@@ -33,7 +43,7 @@
     return base == null || !c.px ? base : (1 + base) * (l.p / c.px) - 1;
   }
   const median = (a) => { const s = a.slice().sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
-  const nice = (x) => { const steps = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2]; return steps.find((s) => s >= x) || 3; };
+  const nice = (x) => { const steps = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 7.5, 10]; return steps.find((s) => s >= x) || 15; };
 
   function stats() {
     return groups.map((g) => { const v = g.list.map(val).filter((x) => x != null); return { nm: g.nm, med: median(v), up: v.filter((x) => x > 0).length, n: v.length, eur: v.length ? 100 * (1 + v.reduce((a, x) => a + x, 0) / v.length) : null }; });
@@ -49,7 +59,7 @@
     const cap = nice(all[Math.floor(all.length * 0.97)] || 0.02), sy = AMP / cap, sw = (W - AX) / groups.length, st = stats(), now = performance.now();
     // percent grid
     g.font = "12px system-ui, sans-serif"; g.textBaseline = "middle"; g.textAlign = "right";
-    [-1, -0.5, 0.5, 1].forEach((f) => { const y = Y - f * AMP; g.fillStyle = GRID; g.fillRect(AX, y, W - AX, 1); g.fillStyle = MUTED; g.fillText(pct(f * cap, cap < 0.1 ? 1 : 0), AX - 6, y); });
+    [-1, -0.5, 0.5, 1].forEach((f) => { if (f * cap < -1) return; const y = Y - f * AMP; g.fillStyle = GRID; g.fillRect(AX, y, W - AX, 1); g.fillStyle = MUTED; g.fillText(pct(f * cap, cap < 0.1 ? 1 : 0), AX - 6, y); });
     g.fillStyle = MUTED; g.fillText("0%", AX - 6, Y);
     hits = [];
     groups.forEach((grp, k) => {
@@ -98,10 +108,10 @@
   function money() {
     const el = box.querySelector("#sig-money");
     if (!F || !F.days || !F.days.length) { el.textContent = ""; return; }
-    const days = F.days.slice(-PERIODS[period][3]), cnt = F.names.map((nm, k) => ({ nm, i: days.filter((d) => d.rows[k][5] === 1).length, o: days.filter((d) => d.rows[k][5] === -1).length }));
+    const want = PERIODS[period][3], days = F.days.slice(-want), short = want > F.days.length + 5, cnt = F.names.map((nm, k) => ({ nm, i: days.filter((d) => d.rows[k][5] === 1).length, o: days.filter((d) => d.rows[k][5] === -1).length }));
     const ins = cnt.filter((x) => x.i).sort((a, b) => b.i - a.i).slice(0, 3), outs = cnt.filter((x) => x.o).sort((a, b) => b.o - a.o).slice(0, 3);
     const fmt = (a, key) => a.map((x) => `<b>${x.nm}</b>` + (days.length > 1 ? ` (${x[key]} ${x[key] === 1 ? "day" : "days"})` : "")).join(", ");
-    el.innerHTML = `<b>Where the trading went:</b> ` + (ins.length || outs.length
+    el.innerHTML = `<b>Where the trading went${short ? " (the daily money record covers the last year only)" : ""}:</b> ` + (ins.length || outs.length
       ? (ins.length ? `money came <b class="up">in</b> to ${fmt(ins, "i")}. ` : "") + (outs.length ? `Money went <b class="down">out</b> of ${fmt(outs, "o")}. ` : "")
       : "nothing unusual, every category got about its usual slice. ") + `<a href="#" id="sig-more">See the money report</a>`;
     el.querySelector("#sig-more").onclick = (e) => { e.preventDefault(); const t = document.querySelector('#view-seg button[data-view="flow"]'); if (t) { t.click(); window.scrollTo({ top: 0 }); } };
