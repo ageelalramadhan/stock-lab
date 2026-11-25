@@ -1049,7 +1049,7 @@ def main():
         }
         write_js(STOCK_DIR / f"{s}.js", f"window.STOCK_DETAIL=window.STOCK_DETAIL||{{}};window.STOCK_DETAIL[{json.dumps(s)}]=", detail)
         cells.append({"s": s, "n": m["name"], "sec": m["sector"], "px": r(last_close, 2), "d1": chg(1),
-                      "m1": chg(21), "dv": round(float((c * df["Volume"]).iloc[-60:].mean()) / 1e6, 1),
+                      "m1": chg(21), "w1": chg(5), "y1": chg(252), "dv": round(float((c * df["Volume"]).iloc[-60:].mean()) / 1e6, 1),
                       "rk": int(L["rank"]) if L is not None else None, "pct": r(L["pct"], 3) if L is not None else None,
                       "sc": r(score), "mom": r(mom_now.get(s)),
                       "en": next_e, "es": r(last_e["surprise"]) if last_e is not None else None,

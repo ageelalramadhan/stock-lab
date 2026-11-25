@@ -1,83 +1,102 @@
-/* The money signal: one straight line, one section per category. Every spike is a real trading day
-   (or a real week, in the year view). Nothing moves by itself: the picture changes only when the data does. */
+/* The signal line: one straight line, one section per category, one thin bar per company.
+   Each bar is that company's real price change in percent. With live prices on, a bar moves only when a real new price arrives. */
 (function () {
-  const F = window.FLOWS, box = document.getElementById("signal");
-  if (!box || !F || !F.days || !F.days.length) { if (box) box.hidden = true; return; }
-  const N = F.names, D = F.days, tip = document.getElementById("tip");
+  const C = window.CELL, F = window.FLOWS, box = document.getElementById("signal");
+  if (!box || !C || !C.cells) { if (box) box.hidden = true; return; }
+  const tip = document.getElementById("tip");
   const SHORT = { "Information Technology": "Technology", "Consumer Discretionary": "Discretionary", "Consumer Staples": "Staples", "Communication Services": "Communication" };
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  const pct = (x) => (x >= 0 ? "+" : "") + (x * 100).toFixed(1) + "%";
-  const day = (s, o) => new Date(s + "T12:00:00").toLocaleDateString("en-GB", o || { weekday: "short", day: "numeric", month: "short", year: "numeric" });
-  const PERIODS = { day: ["Day", 1], week: ["Week", 5], month: ["Month", 21], year: ["Year", D.length] };
-  let period = "month", hits = [], hover = null;
+  const pct = (x, d) => (x >= 0 ? "+" : "") + (x * 100).toFixed(d == null ? 1 : d) + "%";
+  const PERIODS = { day: ["Day", "d1", "on the last trading day", 1], week: ["Week", "w1", "over the last 5 trading days", 5], month: ["Month", "m1", "over the last 21 trading days", 21], year: ["Year", "y1", "over the last year", 252] };
+  const cells = C.cells.filter((c) => c.sec !== "Benchmark");
+  const names = Array.from(new Set(cells.map((c) => c.sec))).sort();
+  const groups = names.map((nm) => ({ nm, list: cells.filter((c) => c.sec === nm).sort((a, b) => (b.dv || 0) - (a.dv || 0)) }));
+  const live = {};
+  let period = "day", hits = [], hover = null, pending = false;
 
-  box.innerHTML = `<div class="sig-head"><div><h2>Where is the money going?</h2>
+  box.innerHTML = `<div class="sig-head"><div><h2>The signal: how every company moved</h2>
       <p class="lead" id="sig-lead"></p></div>
       <div class="seg" id="sig-seg">${Object.keys(PERIODS).map((k) => `<button data-p="${k}">${PERIODS[k][0]}</button>`).join("")}</div></div>
     <div id="sig-wrap"><canvas id="sig"></canvas></div>
-    <div class="sig-key"><span><i class="fl-sw" style="background:var(--up)"></i>prices went up</span><span><i class="fl-sw" style="background:var(--down)"></i>prices went down</span>
-      <span><b>Taller</b> = a bigger slice of all the trading than usual.</span><span><b>Strong colour</b> = clearly more than usual (money IN or OUT). Click a spike for the full story of that day.</span></div>`;
+    <div class="sig-key"><span><b>Each thin bar is one company.</b> Up and green: its price rose. Down and red: it fell. Longer: a bigger change in percent.</span>
+      <span><b>Thick line</b>: the middle company of that category.</span><span>Inside a category the most traded companies are on the left. Click a bar to open that company.</span></div>
+    <p class="lead" id="sig-money" style="margin-top:8px"></p>`;
   const cv = box.querySelector("#sig"), wrap = box.querySelector("#sig-wrap");
 
-  // the spikes for one category: one per day, or one per week in the year view
-  function series(k) {
-    const n = PERIODS[period][1], days = D.slice(-n).map((d, j) => ({ i: D.length - Math.min(n, D.length) + j, d: d.d, extra: d.rows[k][0], z: d.rows[k][1], move: d.rows[k][2], st: d.rows[k][5] }));
-    if (period !== "year") return days;
-    const out = [];
-    for (let e = days.length; e > 0; e -= 5) {
-      const w = days.slice(Math.max(0, e - 5), e), m = (f) => w.reduce((a, x) => a + f(x), 0) / w.length;
-      const z = m((x) => x.z), move = w.reduce((a, x) => a * (1 + x.move), 1) - 1;
-      out.unshift({ i: w[w.length - 1].i, d: w[0].d, d2: w[w.length - 1].d, extra: m((x) => x.extra), z, move, st: z >= F.z ? (move > 0 ? 1 : move < 0 ? -1 : 0) : 0, week: true,
-        ins: w.filter((x) => x.st === 1).length, outs: w.filter((x) => x.st === -1).length });
-    }
-    return out;
+  // a company's change for the chosen period. A live price (if one has arrived) replaces last night's price.
+  function val(c) {
+    const base = c[PERIODS[period][1]], l = live[c.s];
+    if (!l) return base;
+    if (period === "day") return l.pc ? l.p / l.pc - 1 : base;
+    return base == null || !c.px ? base : (1 + base) * (l.p / c.px) - 1;
+  }
+  const median = (a) => { const s = a.slice().sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
+  const nice = (x) => { const steps = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2]; return steps.find((s) => s >= x) || 3; };
+
+  function stats() {
+    return groups.map((g) => { const v = g.list.map(val).filter((x) => x != null); return { nm: g.nm, med: median(v), up: v.filter((x) => x > 0).length, n: v.length }; });
   }
 
   function draw() {
-    const W = Math.max(880, wrap.clientWidth), AMP = 64, Y = AMP + 10, H = Y + AMP + 58, dpr = window.devicePixelRatio || 1;
+    pending = false;
+    const W = Math.max(900, wrap.clientWidth), AX = 46, AMP = 96, Y = AMP + 14, H = Y + AMP + 66, dpr = window.devicePixelRatio || 1;
     cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px";
     const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
-    const UP = css("--up"), DOWN = css("--down"), INK = css("--text-primary"), MUTED = css("--text-muted"), sw = W / N.length;
+    const UP = css("--up"), DOWN = css("--down"), INK = css("--text-primary"), MUTED = css("--text-muted"), GRID = css("--grid");
+    const all = cells.map(val).filter((x) => x != null).map(Math.abs).sort((a, b) => a - b);
+    const cap = nice(all[Math.floor(all.length * 0.97)] || 0.02), sy = AMP / cap, sw = (W - AX) / groups.length, st = stats(), now = performance.now();
+    // percent grid
+    g.font = "12px system-ui, sans-serif"; g.textBaseline = "middle"; g.textAlign = "right";
+    [-1, -0.5, 0.5, 1].forEach((f) => { const y = Y - f * AMP; g.fillStyle = GRID; g.fillRect(AX, y, W - AX, 1); g.fillStyle = MUTED; g.fillText(pct(f * cap, cap < 0.1 ? 1 : 0), AX - 6, y); });
+    g.fillStyle = MUTED; g.fillText("0%", AX - 6, Y);
     hits = [];
-    N.forEach((nm, k) => {
-      const s = series(k), x0 = k * sw, pad = 10, step = (sw - pad * 2) / s.length, bw = Math.max(1, Math.min(14, step - (step > 4 ? 2 : 0.4)));
-      s.forEach((p, j) => {
-        const cx = x0 + pad + step * (j + 0.5), h = p.z > 0 ? Math.max(3, (Math.min(p.z, 4) / 4) * AMP) : 3, up = p.move >= 0;
-        g.globalAlpha = p.st !== 0 ? 1 : 0.32; g.fillStyle = up ? UP : DOWN;
-        g.fillRect(cx - bw / 2, up ? Y - h : Y, bw, h);
-        if (hover && hover.k === k && hover.j === j) { g.globalAlpha = 1; g.strokeStyle = INK; g.lineWidth = 1.5; g.strokeRect(cx - bw / 2 - 1.5, (up ? Y - h : Y) - 1.5, bw + 3, h + 3); }
-        hits.push({ k, j, x: cx, half: Math.max(step / 2, 2), p });
+    groups.forEach((grp, k) => {
+      const x0 = AX + k * sw, pad = 7, step = (sw - pad * 2) / grp.list.length, bw = Math.max(1, step - (step > 3 ? 1 : 0.3));
+      grp.list.forEach((c, j) => {
+        const v = val(c); if (v == null) return;
+        const cx = x0 + pad + step * (j + 0.5), over = Math.abs(v) > cap, h = Math.max(1.5, Math.min(Math.abs(v), cap) * sy), up = v >= 0, top = up ? Y - h : Y;
+        g.fillStyle = up ? UP : DOWN; g.fillRect(cx - bw / 2, top, bw, h);
+        if (over) { g.fillStyle = INK; g.fillRect(cx - bw / 2, up ? top - 3 : top + h + 1, bw, 2); }   // goes beyond the picture
+        const l = live[c.s], fresh = l && l.flash && now - l.flash < 900, hov = hover === c.s;
+        if (fresh || hov) { g.strokeStyle = INK; g.lineWidth = 1.5; g.strokeRect(cx - bw / 2 - 1.5, top - 1.5, bw + 3, h + 3); }
+        hits.push({ x: cx, half: Math.max(step / 2, 1.5), c, v });
       });
-      g.globalAlpha = 1;
-      // the category's mark on the line, and its name underneath
-      g.fillStyle = INK; g.fillRect(x0 + sw / 2 - 1, Y + AMP + 2, 2, 9);
-      g.fillStyle = MUTED; if (k > 0) g.fillRect(x0, Y - 6, 1, 12);
-      g.fillStyle = INK; g.font = "600 12.5px system-ui, sans-serif"; g.textAlign = "center"; g.textBaseline = "alphabetic";
-      g.fillText(SHORT[nm] || nm, x0 + sw / 2, Y + AMP + 26);
-      const daysIn = D.slice(-PERIODS[period][1]), ins = daysIn.filter((d) => d.rows[k][5] === 1).length, outs = daysIn.filter((d) => d.rows[k][5] === -1).length;
-      g.font = "12px system-ui, sans-serif";
-      const a = ins + " in", b = "  " + outs + " out", wa = g.measureText(a).width, wb = g.measureText(b).width, sx = x0 + sw / 2 - (wa + wb) / 2;
-      g.textAlign = "left"; g.fillStyle = ins ? UP : MUTED; g.fillText(a, sx, Y + AMP + 43); g.fillStyle = outs ? DOWN : MUTED; g.fillText(b, sx + wa, Y + AMP + 43);
+      const s = st[k];
+      if (s.med != null) {   // the middle company of the category
+        const y = Y - Math.max(-cap, Math.min(cap, s.med)) * sy;
+        g.fillStyle = css("--surface-1"); g.fillRect(x0 + pad - 2, y - 3, sw - pad * 2 + 4, 6);
+        g.fillStyle = INK; g.fillRect(x0 + pad - 2, y - 1.5, sw - pad * 2 + 4, 3);
+      }
+      g.fillStyle = MUTED; if (k > 0) g.fillRect(x0, Y - AMP, 1, AMP * 2);
+      g.fillStyle = INK; g.fillRect(x0 + sw / 2 - 1, Y + AMP + 4, 2, 8);
+      g.textAlign = "center"; g.textBaseline = "alphabetic";
+      g.font = "600 12.5px system-ui, sans-serif"; g.fillStyle = INK; g.fillText(SHORT[grp.nm] || grp.nm, x0 + sw / 2, Y + AMP + 27);
+      if (s.med != null) { g.font = "800 15px system-ui, sans-serif"; g.fillStyle = s.med >= 0 ? UP : DOWN; g.fillText(pct(s.med), x0 + sw / 2, Y + AMP + 45); }
+      g.font = "12px system-ui, sans-serif"; g.fillStyle = MUTED; g.fillText(s.up + " of " + s.n + " up", x0 + sw / 2, Y + AMP + 61);
     });
-    g.fillStyle = INK; g.fillRect(0, Y - 1, W, 2);   // the one straight line
+    g.fillStyle = INK; g.fillRect(AX, Y - 1, W - AX, 2);   // the one straight line
+    lead(st);
   }
 
-  function lead() {
-    const n = PERIODS[period][1], days = D.slice(-n), last = D[D.length - 1];
-    const cnt = N.map((nm, k) => ({ nm, i: days.filter((d) => d.rows[k][5] === 1).length, o: days.filter((d) => d.rows[k][5] === -1).length }));
-    const mi = cnt.slice().sort((a, b) => b.i - a.i)[0], mo = cnt.slice().sort((a, b) => b.o - a.o)[0];
-    const span = period === "day" ? day(last.d) : `the last ${days.length} trading days (up to ${day(last.d, { day: "numeric", month: "short" })})`;
-    const what = period === "year" ? "Each spike is one week." : period === "day" ? "Each spike is that one day." : "Each spike is one day.";
-    const names = (v) => N.filter((_, k) => last.rows[k][5] === v).join(", ");
-    if (period === "day") {
-      box.querySelector("#sig-lead").innerHTML = `${what} Showing ${span}. ` + (names(1) || names(-1)
-        ? (names(1) ? `Money came <b class="up">in</b> to <b>${names(1)}</b>. ` : "") + (names(-1) ? `Money went <b class="down">out</b> of <b>${names(-1)}</b>.` : "")
-        : "Nothing unusual: every category got about its usual slice of the trading.");
-    } else
-    box.querySelector("#sig-lead").innerHTML = `${what} Showing ${span}. ` + (mi.i || mo.o
-      ? `Money came <b class="up">in</b> most often to <b>${mi.i ? mi.nm : "no category"}</b>${mi.i ? " (" + mi.i + (mi.i === 1 ? " day" : " days") + ")" : ""}. Money went <b class="down">out</b> most often from <b>${mo.o ? mo.nm : "no category"}</b>${mo.o ? " (" + mo.o + (mo.o === 1 ? " day" : " days") + ")" : ""}.`
-      : "Nothing unusual: every category got about its usual slice of the trading.");
+  function lead(st) {
+    const P = PERIODS[period], up = st.reduce((a, s) => a + s.up, 0), n = st.reduce((a, s) => a + s.n, 0);
+    const ok = st.filter((s) => s.med != null).sort((a, b) => b.med - a.med), liveN = Object.keys(live).length;
+    box.querySelector("#sig-lead").innerHTML = `<b>${up} of ${n}</b> companies went up ${P[2]}. Strongest category: <b>${ok[0].nm}</b> (<b class="${ok[0].med >= 0 ? "up" : "down"}">${pct(ok[0].med)}</b>). Weakest: <b>${ok[ok.length - 1].nm}</b> (<b class="${ok[ok.length - 1].med >= 0 ? "up" : "down"}">${pct(ok[ok.length - 1].med)}</b>).`
+      + (liveN ? ` <span class="count">live prices in ${liveN} companies</span>` : "");
     box.querySelectorAll("#sig-seg button").forEach((b) => b.classList.toggle("on", b.dataset.p === period));
+  }
+
+  // where the trading went in the same period (counted from the nightly money report)
+  function money() {
+    const el = box.querySelector("#sig-money");
+    if (!F || !F.days || !F.days.length) { el.textContent = ""; return; }
+    const days = F.days.slice(-PERIODS[period][3]), cnt = F.names.map((nm, k) => ({ nm, i: days.filter((d) => d.rows[k][5] === 1).length, o: days.filter((d) => d.rows[k][5] === -1).length }));
+    const ins = cnt.filter((x) => x.i).sort((a, b) => b.i - a.i).slice(0, 3), outs = cnt.filter((x) => x.o).sort((a, b) => b.o - a.o).slice(0, 3);
+    const fmt = (a, key) => a.map((x) => `<b>${x.nm}</b>` + (days.length > 1 ? ` (${x[key]} ${x[key] === 1 ? "day" : "days"})` : "")).join(", ");
+    el.innerHTML = `<b>Where the trading went:</b> ` + (ins.length || outs.length
+      ? (ins.length ? `money came <b class="up">in</b> to ${fmt(ins, "i")}. ` : "") + (outs.length ? `Money went <b class="down">out</b> of ${fmt(outs, "o")}. ` : "")
+      : "nothing unusual, every category got about its usual slice. ") + `<a href="#" id="sig-more">See the money report</a>`;
+    el.querySelector("#sig-more").onclick = (e) => { e.preventDefault(); const t = document.querySelector('#view-seg button[data-view="flow"]'); if (t) { t.click(); window.scrollTo({ top: 0 }); } };
   }
 
   function at(e) {
@@ -86,26 +105,24 @@
     return best;
   }
   cv.addEventListener("mousemove", (e) => {
-    const h = at(e), was = hover; hover = h ? { k: h.k, j: h.j } : null;
-    if (!!was !== !!hover || (was && hover && (was.k !== hover.k || was.j !== hover.j))) draw();
+    const h = at(e), was = hover; hover = h ? h.c.s : null;
+    if (was !== hover) draw();
     cv.style.cursor = h ? "pointer" : "default";
     if (!h || !tip) { if (tip) tip.hidden = true; return; }
-    const p = h.p, when = p.week ? "Week of " + day(p.d, { day: "numeric", month: "short" }) + " to " + day(p.d2, { day: "numeric", month: "short", year: "numeric" }) : day(p.d);
-    tip.innerHTML = `<b>${N[h.k]}</b><div><span>${when}</span><span></span></div>
-      <div><span>Slice of the trading</span><span>${p.extra >= 0 ? "+" : ""}${p.extra.toFixed(1)} of 100 vs usual</span></div>
-      <div><span>Prices</span><span>${pct(p.move)}</span></div>
-      <div><span>Reading</span><span>${p.week ? p.ins + " in days, " + p.outs + " out days" : p.st === 1 ? "money came in" : p.st === -1 ? "money went out" : "a normal day"}</span></div>`;
+    tip.innerHTML = `<b>${h.c.n} (${h.c.s})</b><div><span>${h.c.sec}</span><span></span></div><div><span>Price change, ${PERIODS[period][0].toLowerCase()}</span><span>${pct(h.v)}</span></div>` + (live[h.c.s] ? `<div><span>Live price</span><span>$${live[h.c.s].p.toFixed(2)}</span></div>` : "");
     tip.hidden = false; tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 8, e.clientX + 14) + "px"; tip.style.top = e.clientY + 14 + "px";
   });
   cv.addEventListener("mouseleave", () => { hover = null; if (tip) tip.hidden = true; draw(); });
-  cv.addEventListener("click", (e) => {
-    const h = at(e), tab = document.querySelector('#view-seg button[data-view="flow"]');
-    if (!h || !tab) return;
-    if (tip) tip.hidden = true;
-    tab.click(); if (window.STOCKLAB_FLOW_PICK) window.STOCKLAB_FLOW_PICK(h.p.i); window.scrollTo({ top: 0 });
-  });
-  box.querySelector("#sig-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { period = b.dataset.p; hover = null; lead(); draw(); } });
+  cv.addEventListener("click", (e) => { const h = at(e); if (h && window.STOCKLAB_OPEN) { if (tip) tip.hidden = true; window.STOCKLAB_OPEN(h.c.s); } });
+  box.querySelector("#sig-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { period = b.dataset.p; hover = null; draw(); money(); } });
   window.addEventListener("resize", () => { if (cv.offsetParent) draw(); });
   window.addEventListener("stocklab-cell", () => draw());
-  lead(); draw();
+  const later = (ms) => { if (!pending) { pending = true; setTimeout(draw, ms); } };
+  window.addEventListener("stocklab-tick", (e) => {
+    const d = e.detail; if (!d || !d.p) return;
+    const l = live[d.s] || (live[d.s] = {}); l.p = d.p; if (d.pc) l.pc = d.pc;
+    if (d.changed) { l.flash = performance.now(); setTimeout(() => later(0), 950); }
+    if (cv.offsetParent) later(200);
+  });
+  draw(); money();
 })();

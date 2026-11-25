@@ -593,6 +593,7 @@
     }
     l.price = p;
     if (prevClose) l.prevClose = prevClose;
+    window.dispatchEvent(new CustomEvent("stocklab-tick", { detail: { s: sym, p: p, pc: l.prevClose || null, changed: !!(before && p !== before) } }));
     if (sym === selected) refresh();
   }
 
