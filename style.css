@@ -452,3 +452,6 @@ b.up, b.down { font-weight: 800; }
 .period-bar .seg { flex-wrap: wrap; } .period-bar .seg button { font-size: 14px; padding: 7px 11px; }
 .period-bar .play { font-weight: 700; } .period-bar .play.primary { color: #fff; }
 #sig-lead { min-height: 46px; } #cell-lead { min-height: 44px; }
+.period-bar .pb-ctl { display: inline-flex; gap: 6px; } .period-bar .pb-ctl .btn { font-weight: 700; }
+.period-bar .pb-ctl .btn.primary { color: #fff; } .period-bar .pb-ctl .btn:disabled { opacity: 0.55; cursor: default; }
+.period-bar .pb-ctl .btn.play:disabled.primary { opacity: 1; }

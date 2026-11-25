@@ -717,24 +717,27 @@
     window.dispatchEvent(new CustomEvent("stocklab-period", { detail: { key: key, dur: glide.dur } }));
   }
   function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; } paintBars(); }
-  function play() {
-    if (playTimer) { stopPlay(); return; }
-    let i = PER[0] === "day" ? 0 : Math.max(0, ORDER.indexOf(PER[0]));   // start from Max, or carry on from where it was paused
+  function play() {   // keeps going round (Max down to 1 day, then Max again) until Stop or Live is pressed
+    if (playTimer) return;
+    let i = PER[0] === "day" ? 0 : Math.max(0, ORDER.indexOf(PER[0]));   // start from Max, or carry on from where it was stopped
     setPeriod(ORDER[i], true);
-    playTimer = setInterval(() => { i++; if (i >= ORDER.length) { stopPlay(); return; } setPeriod(ORDER[i], true); }, STEP_MS);
+    playTimer = setInterval(() => { i = (i + 1) % ORDER.length; setPeriod(ORDER[i], true); }, STEP_MS);
     paintBars();
   }
   function paintBars() {
     document.querySelectorAll(".period-bar").forEach((el) => {
       el.querySelectorAll("button[data-p]").forEach((b) => b.classList.toggle("on", b.dataset.p === PER[0]));
-      const pb = el.querySelector(".play"); if (pb) { pb.textContent = playTimer ? "Pause" : "Play: Max to 1 day"; pb.classList.toggle("primary", !!playTimer); }
+      const on = !!playTimer, q = (c) => el.querySelector(c);
+      if (q(".play")) { q(".play").classList.toggle("primary", on); q(".play").disabled = on; q(".play").textContent = on ? "Playing" : "Play"; }
+      if (q(".stop")) q(".stop").disabled = !on;
+      if (q(".live")) q(".live").classList.toggle("primary", !on && PER[0] === "day");
     });
   }
   function mountBars() {
     document.querySelectorAll(".period-bar").forEach((el) => {
       if (el.dataset.ready) return; el.dataset.ready = "1";
-      el.innerHTML = `<div class="seg">${PERIODS.map((p) => `<button data-p="${p[0]}">${p[1]}</button>`).join("")}</div><button class="btn play"></button>`;
-      el.addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; if (b.classList.contains("play")) play(); else setPeriod(b.dataset.p); });
+      el.innerHTML = `<div class="seg">${PERIODS.map((p) => `<button data-p="${p[0]}">${p[1]}</button>`).join("")}</div><span class="pb-ctl"><button class="btn play" title="Go round from Max down to 1 day, again and again">Play</button><button class="btn stop" title="Stop on the time shown now">Stop</button><button class="btn live" title="Back to now: the last day, with live prices if they are on">Live</button></span>`;
+      el.addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; if (b.classList.contains("play")) play(); else if (b.classList.contains("stop")) stopPlay(); else if (b.classList.contains("live")) setPeriod("day"); else setPeriod(b.dataset.p); });
     });
     paintBars();
   }
