@@ -7,6 +7,7 @@
   const SHORT = { "Information Technology": "Technology", "Consumer Discretionary": "Discretionary", "Consumer Staples": "Staples", "Communication Services": "Communication" };
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const pct = (x, d) => (x >= 0 ? "+" : "") + (x * 100).toFixed(d == null ? 1 : d) + "%";
+  const eur = (x) => "\u20ac" + x.toFixed(2);
   const PERIODS = { day: ["Day", "d1", "on the last trading day", 1], week: ["Week", "w1", "over the last 5 trading days", 5], month: ["Month", "m1", "over the last 21 trading days", 21], year: ["Year", "y1", "over the last year", 252] };
   const cells = C.cells.filter((c) => c.sec !== "Benchmark");
   const names = Array.from(new Set(cells.map((c) => c.sec))).sort();
@@ -19,7 +20,8 @@
       <div class="seg" id="sig-seg">${Object.keys(PERIODS).map((k) => `<button data-p="${k}">${PERIODS[k][0]}</button>`).join("")}</div></div>
     <div id="sig-wrap"><canvas id="sig"></canvas></div>
     <div class="sig-key"><span><b>Each thin bar is one company.</b> Up and green: its price rose. Down and red: it fell. Longer: a bigger change in percent.</span>
-      <span><b>Thick line</b>: the middle company of that category.</span><span>Inside a category the most traded companies are on the left. Click a bar to open that company.</span></div>
+      <span><b>Thick line</b>: the middle company of that category.</span><span>Inside a category the most traded companies are on the left. Click a bar to open that company.</span>
+      <span><b>\u20ac100 became</b>: 100 euros shared equally between all companies of that category at the start, and what they would be worth at the end. Price changes only: no fees, and no change between euro and dollar.</span></div>
     <p class="lead" id="sig-money" style="margin-top:8px"></p>`;
   const cv = box.querySelector("#sig"), wrap = box.querySelector("#sig-wrap");
 
@@ -34,12 +36,12 @@
   const nice = (x) => { const steps = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2]; return steps.find((s) => s >= x) || 3; };
 
   function stats() {
-    return groups.map((g) => { const v = g.list.map(val).filter((x) => x != null); return { nm: g.nm, med: median(v), up: v.filter((x) => x > 0).length, n: v.length }; });
+    return groups.map((g) => { const v = g.list.map(val).filter((x) => x != null); return { nm: g.nm, med: median(v), up: v.filter((x) => x > 0).length, n: v.length, eur: v.length ? 100 * (1 + v.reduce((a, x) => a + x, 0) / v.length) : null }; });
   }
 
   function draw() {
     pending = false;
-    const W = Math.max(900, wrap.clientWidth), AX = 46, AMP = 96, Y = AMP + 14, H = Y + AMP + 66, dpr = window.devicePixelRatio || 1;
+    const W = Math.max(900, wrap.clientWidth), AX = 46, AMP = 96, Y = AMP + 14, H = Y + AMP + 92, dpr = window.devicePixelRatio || 1;
     cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px";
     const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
     const UP = css("--up"), DOWN = css("--down"), INK = css("--text-primary"), MUTED = css("--text-muted"), GRID = css("--grid");
@@ -73,6 +75,10 @@
       g.font = "600 12.5px system-ui, sans-serif"; g.fillStyle = INK; g.fillText(SHORT[grp.nm] || grp.nm, x0 + sw / 2, Y + AMP + 27);
       if (s.med != null) { g.font = "800 15px system-ui, sans-serif"; g.fillStyle = s.med >= 0 ? UP : DOWN; g.fillText(pct(s.med), x0 + sw / 2, Y + AMP + 45); }
       g.font = "12px system-ui, sans-serif"; g.fillStyle = MUTED; g.fillText(s.up + " of " + s.n + " up", x0 + sw / 2, Y + AMP + 61);
+      if (s.eur != null) {   // 100 euros split equally over every company of the category at the start of the period
+        g.fillStyle = MUTED; g.fillText("\u20ac100 became", x0 + sw / 2, Y + AMP + 76);
+        g.font = "800 14px system-ui, sans-serif"; g.fillStyle = s.eur >= 100 ? UP : DOWN; g.fillText(eur(s.eur), x0 + sw / 2, Y + AMP + 91 - 1);
+      }
     });
     g.fillStyle = INK; g.fillRect(AX, Y - 1, W - AX, 2);   // the one straight line
     lead(st);
@@ -80,8 +86,10 @@
 
   function lead(st) {
     const P = PERIODS[period], up = st.reduce((a, s) => a + s.up, 0), n = st.reduce((a, s) => a + s.n, 0);
+    const allV = cells.map(val).filter((x) => x != null), allEur = 100 * (1 + allV.reduce((a, x) => a + x, 0) / allV.length);
     const ok = st.filter((s) => s.med != null).sort((a, b) => b.med - a.med), liveN = Object.keys(live).length;
     box.querySelector("#sig-lead").innerHTML = `<b>${up} of ${n}</b> companies went up ${P[2]}. Strongest category: <b>${ok[0].nm}</b> (<b class="${ok[0].med >= 0 ? "up" : "down"}">${pct(ok[0].med)}</b>). Weakest: <b>${ok[ok.length - 1].nm}</b> (<b class="${ok[ok.length - 1].med >= 0 ? "up" : "down"}">${pct(ok[ok.length - 1].med)}</b>).`
+      + ` \u20ac100 split over all ${n} companies became <b class="${allEur >= 100 ? "up" : "down"}">${eur(allEur)}</b>.`
       + (liveN ? ` <span class="count">live prices in ${liveN} companies</span>` : "");
     box.querySelectorAll("#sig-seg button").forEach((b) => b.classList.toggle("on", b.dataset.p === period));
   }
