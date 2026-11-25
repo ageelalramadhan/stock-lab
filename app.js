@@ -43,6 +43,15 @@
     const base = c[PER[2]];
     return base == null || !l || !l.price || !c.px ? base : (1 + base) * (l.price / c.px) - 1;
   };
+  // gliding from one time period to the next: every line and ring travels from its old real value to its new real value
+  const glide = { t0: -1e9, dur: 700, from: {} };
+  const norm = (c) => { const mv = dayMove(c); return mv == null ? null : Math.max(-1, Math.min(1, mv / PER[3])); };
+  const shown = (c, now) => {
+    const target = norm(c), k = (now - glide.t0) / glide.dur, f = glide.from[c.s];
+    if (k >= 1 || f == null || target == null) return target;
+    const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+    return f + (target - f) * e;
+  };
   const dayCol = (x) => (x == null || Math.abs(x) < 0.002 ? FLAT : x > 0 ? UP : DOWN);
   const chip = (x, label) => `<span class="chip ${x == null || Math.abs(x) < 0.002 ? "flat" : x > 0 ? "up" : "down"}">${x == null || Math.abs(x) < 0.002 ? "=" : x > 0 ? "+" : "−"} ${label || (Math.abs(x || 0) * 100).toFixed(1) + "%"}</span>`;
 
@@ -202,10 +211,11 @@
       // the beat: one line for every company, standing on the edge. Longer line = bigger move on the last day.
       const lw = Math.max(1.6, (Math.PI * 2 * R / total) * 0.62);
       nodes.forEach((n) => {
-        const mv = dayMove(n.c), l = live[n.c.s];
-        if (mv == null) return;
+        const sh = shown(n.c, now), l = live[n.c.s];
+        if (sh == null) return;
+        const mv = sh * PER[3];
         const flash = l && l.pulse ? Math.max(0, 1 - (now - l.pulse) / 900) : 0;
-        const r0 = edgeAt(n.ang, t) + 4, len = 2 + Math.min(1, Math.abs(mv) / PER[3]) * R * 0.085 + flash * 8;
+        const r0 = edgeAt(n.ang, t) + 4, len = 2 + Math.abs(sh) * R * 0.085 + flash * 8;
         n.l0 = r0; n.l1 = r0 + len;   // remembered so the line can be hovered and clicked
         const cos = Math.cos(n.ang), sin = Math.sin(n.ang), mine = n === hover || n.c.s === selected;
         ctx.lineCap = "round";
@@ -262,7 +272,7 @@
       // the companies
       const sel = nodeOf[selected];
       nodes.forEach((n) => {
-        const c = n.c, mv = dayMove(c), col = dayCol(mv), l = live[c.s];
+        const c = n.c, sh = shown(c, now), mv = sh == null ? null : sh * PER[3], col = dayCol(mv), l = live[c.s];
         const fade = hoverSec && n.sec !== hoverSec;
         if (fade) { ctx.globalAlpha = 0.18; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(n.x, n.y, n.rr, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; return; }
         // rings stay still. A ring only flashes when a real new price arrives (market open + live prices on).
@@ -693,16 +703,18 @@
     });
   }, 1000);
   // ---------- one time period for the cell and the signal line, with a play button ----------
-  const STEP_MS = 1800, ORDER = ["max", "five", "year", "ytd", "half", "month", "week", "day"];
+  const STEP_MS = 2000, GLIDE_PLAY = 1700, ORDER = ["max", "five", "year", "ytd", "half", "month", "week", "day"];
   let playTimer = null;
   function setPeriod(key, fromPlay) {
     const p = PERIODS.find((x) => x[0] === key); if (!p) return;
     if (!fromPlay) stopPlay();
-    PER = p;
+    const now = performance.now(), from = {};
+    cos.forEach((c) => { from[c.s] = shown(c, now); });   // where every line is right now, even in the middle of a glide
+    PER = p; glide.from = from; glide.t0 = now; glide.dur = fromPlay ? GLIDE_PLAY : 700;
     secs.forEach((s) => { s.ups = s.list.filter((c) => (dayMove(c) || 0) > 0).length; s.downs = s.list.filter((c) => (dayMove(c) || 0) < 0).length; s.known = s.list.filter((c) => dayMove(c) != null).length; s.flip = 0; });
     lead(); if (selected) refresh();
     paintBars();
-    window.dispatchEvent(new CustomEvent("stocklab-period", { detail: { key: key } }));
+    window.dispatchEvent(new CustomEvent("stocklab-period", { detail: { key: key, dur: glide.dur } }));
   }
   function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; } paintBars(); }
   function play() {

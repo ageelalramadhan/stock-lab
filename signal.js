@@ -22,7 +22,7 @@
   const names = Array.from(new Set(cells.map((c) => c.sec))).sort();
   const groups = names.map((nm) => ({ nm, list: cells.filter((c) => c.sec === nm).sort((a, b) => (b.dv || 0) - (a.dv || 0)) }));
   const live = {};
-  const GLIDE = 700;
+  let GLIDE = 700, fromSt = null, shownSt = null;
   let period = "day", hits = [], hover = null, pending = false, from = {}, glide = -1e9;
 
   box.innerHTML = `<div class="sig-head"><div><h2>The signal: how every company moved</h2>
@@ -63,7 +63,9 @@
     [-1, -0.5, 0.5, 1].forEach((f) => { if (f * cap < -1) return; const y = Y - f * AMP; g.fillStyle = GRID; g.fillRect(AX, y, W - AX, 1); g.fillStyle = MUTED; g.fillText(pct(f * cap, cap < 0.1 ? 1 : 0), AX - 6, y); });
     g.fillStyle = MUTED; g.fillText("0%", AX - 6, Y);
     hits = [];
-    const k01 = Math.min(1, (now - glide) / GLIDE), ease = 1 - Math.pow(1 - k01, 3);
+    const k01 = Math.min(1, (now - glide) / GLIDE), ease = k01 < 0.5 ? 4 * k01 * k01 * k01 : 1 - Math.pow(-2 * k01 + 2, 3) / 2;
+    const mix = (a, b) => (a == null || b == null ? b : a + (b - a) * ease);
+    shownSt = [];
     groups.forEach((grp, k) => {
       const x0 = AX + k * sw, pad = 7, step = (sw - pad * 2) / grp.list.length, bw = Math.max(1, step - (step > 3 ? 1 : 0.3));
       grp.list.forEach((c, j) => {
@@ -77,9 +79,12 @@
         if (fresh || hov) { g.strokeStyle = INK; g.lineWidth = 1.5; g.strokeRect(cx - bw / 2 - 1.5, top - 1.5, bw + 3, h + 3); }
         hits.push({ x: cx, half: Math.max(step / 2, 1.5), c, v, px });
       });
-      const s = st[k];
+      const s0 = st[k], f0 = fromSt && fromSt[k];
+      const medPx = s0.med == null ? null : mix(f0 ? f0.medPx : null, Math.max(-cap, Math.min(cap, s0.med)) * sy);
+      const s = { up: s0.up, n: s0.n, med: mix(f0 ? f0.med : null, s0.med), eur: mix(f0 ? f0.eur : null, s0.eur) };   // numbers count smoothly to the new real value
+      shownSt.push({ med: s.med, eur: s.eur, medPx });
       if (s.med != null) {   // the middle company of the category
-        const y = Y - Math.max(-cap, Math.min(cap, s.med)) * sy;
+        const y = Y - medPx;
         g.fillStyle = css("--surface-1"); g.fillRect(x0 + pad - 2, y - 3, sw - pad * 2 + 4, 6);
         g.fillStyle = INK; g.fillRect(x0 + pad - 2, y - 1.5, sw - pad * 2 + 4, 3);
       }
@@ -139,6 +144,7 @@
   window.addEventListener("stocklab-period", (e) => {   // the cell and the line always show the same period
     if (!PERIODS[e.detail.key]) return;
     from = {}; hits.forEach((h) => { from[h.c.s] = h.px; });   // glide from the old picture to the new one
+    fromSt = shownSt; GLIDE = e.detail.dur || 700;
     period = e.detail.key; hover = null; glide = performance.now(); money(); tween();
   });
   function tween() { draw(); if (performance.now() - glide < GLIDE) requestAnimationFrame(tween); }
