@@ -531,6 +531,32 @@ def fund_rows(fund_frames, today, first_day):
     return rows
 
 
+# ---------------- euros: how the dollar moved against the euro in each time period ----------------
+
+def euro_factors(dates, first_day):
+    """For a buyer who starts with euros: 100 euros are changed into dollars at the start and back into euros at the end.
+    factor = (dollars per euro at the start) / (dollars per euro at the end). Above 1 means the dollar gained on the euro."""
+    if DEMO:
+        return None
+    import yfinance as yf
+    fx = yf.download("EURUSD=X", period=f"{YEARS + 1}y", interval="1d", auto_adjust=True, progress=False)["Close"]
+    fx = (fx.iloc[:, 0] if hasattr(fx, "columns") else fx).dropna()
+    fx.index = pd.to_datetime(fx.index).tz_localize(None)
+
+    def at(day):
+        before = fx[fx.index <= day]
+        return float(before.iloc[-1]) if len(before) else None
+
+    today = dates[-1]
+    end = at(today)
+    last_year = [d for d in dates if d.year < today.year]
+    starts = {"d1": dates[-2], "w1": dates[-6], "c1m": today - pd.DateOffset(months=1), "c6m": today - pd.DateOffset(months=6),
+              "c1y": today - pd.DateOffset(years=1), "c5y": today - pd.DateOffset(years=5),
+              "ytd": last_year[-1] if last_year else None, "mx": first_day}
+    f = {k: (r(at(d) / end, 6) if d is not None and at(d) and end else None) for k, d in starts.items()}
+    return {"usd_per_eur": r(end, 4), "f": f}
+
+
 # ---------------- where the trading goes (category money report) ----------------
 
 FLOW_DAYS = 252     # days kept in the daily record (about one year)
@@ -1025,6 +1051,11 @@ def main():
     except Exception as e:   # the funds are an extra: never let them stop the nightly run
         print("Category funds skipped:", e); funds = []
     print(f"Category funds: {len(funds)} of {len(FUNDS)}")
+    try:
+        fx = euro_factors(list(dates), first_day)
+    except Exception as e:   # without the exchange rate the page falls back to dollars
+        print("Euro rate skipped:", e); fx = None
+    print("Euro rate:", fx and fx["usd_per_eur"])
     mom_now = full.sort_values("date").groupby("symbol")["mom_12_1"].last()
     cells = []
     for s, df in frames.items():
@@ -1112,7 +1143,7 @@ def main():
             f.unlink()
 
     out = {"generated": run_date, "horizon_days": H, "data_through": today.strftime("%Y-%m-%d"),
-           "universe_size": len(cells), "history_from": first_day.strftime("%Y-%m-%d"), "funds": funds, "ranked": int(len(latest)), "tentacles": tentacles,
+           "universe_size": len(cells), "history_from": first_day.strftime("%Y-%m-%d"), "funds": funds, "fx": fx, "ranked": int(len(latest)), "tentacles": tentacles,
            "snapshots": int(len(train)), "inputs": [LABELS[c] for c in cols], "test": test, "importance": importance, "baskets": baskets,
            "basket_size": BASKET, "today": tday, "odds": odds, "paper_live": live_paper, "earnings_rows": int(len(earn)), "cells": cells, "links": links,
            "runtime_min": round((time.time() - t0) / 60, 1)}

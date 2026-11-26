@@ -7,7 +7,11 @@
   const SHORT = { "Information Technology": "Technology", "Consumer Discretionary": "Discretionary", "Consumer Staples": "Staples", "Communication Services": "Communication" };
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const pct = (x, d) => (x >= 0 ? "+" : "") + (x * 100).toFixed(d == null ? 1 : d) + "%";
-  const eur = (x) => "\u20ac" + x.toFixed(2);
+  // real euros: 100 euros become dollars at the start and euros again at the end, at the real exchange rates.
+  // If the rate is missing, the page honestly shows dollars instead.
+  const FX = C.fx && C.fx.f ? C.fx.f : null, CUR = FX ? "\u20ac" : "$";
+  const eur = (x) => CUR + x.toFixed(2);
+  const fxf = () => (FX && FX[PERIODS[period][1]]) || 1;
   const FD = F && F.days ? F.days : [], lastDay = C.data_through || "", yr = lastDay.slice(0, 4);
   const since = C.history_from ? new Date(C.history_from + "T12:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : "the start of our data";
   // [button, data field, words, trading days of the money record to count]
@@ -36,7 +40,7 @@
       <span><b>Thick line</b>: the middle company of that category.</span><span>Inside a category the most traded companies are on the left. Click a bar to open that company.</span>
       <span><b>5 years and Max</b> use today's list of companies. Companies that were removed are missing, and newer companies without the full history are left out, so long periods look better than they really were.</span>
       <span><b>Category funds</b> (second line): each one is a real US fund holding that category's companies, with big companies counting more. When a fund and the line above disagree, a few giants moved differently from the rest. These US funds are not sold to private investors in Germany. Similar funds are (see your research report).</span>
-      <span><b>\u20ac100 became</b>: 100 euros shared equally between all companies of that category at the start, and what they would be worth at the end. Counted from prices that include paid dividends (as if they were put back in). No fees, and no change between euro and dollar.</span></div>
+      <span><b>${CUR}100 became</b>: ${FX ? "100 euros changed into dollars at the start, shared equally between all companies of that category, and changed back into euros at the end, at the real exchange rates. So it includes how the dollar moved against the euro. The percent above it is the price change in dollars, so the two can point in different directions." : "100 dollars shared equally between all companies of that category at the start, and what they would be worth at the end."} Counted from prices that include paid dividends. No fees or taxes.</span></div>
     <p class="lead" id="sig-money" style="margin-top:8px"></p>`;
   const cv = box.querySelector("#sig"), wrap = box.querySelector("#sig-wrap");
 
@@ -53,7 +57,7 @@
   const nice = (x) => { const steps = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 7.5, 10]; return steps.find((s) => s >= x) || 15; };
 
   function stats() {
-    return groups.map((g) => { const v = g.list.map(val).filter((x) => x != null); return { nm: g.nm, med: median(v), up: v.filter((x) => x > 0).length, n: v.length, eur: v.length ? 100 * (1 + v.reduce((a, x) => a + x, 0) / v.length) : null }; });
+    return groups.map((g) => { const v = g.list.map(val).filter((x) => x != null); return { nm: g.nm, med: median(v), up: v.filter((x) => x > 0).length, n: v.length, eur: v.length ? 100 * (1 + v.reduce((a, x) => a + x, 0) / v.length) * fxf() : null }; });
   }
 
   function draw() {
@@ -101,7 +105,7 @@
       if (s.med != null) { g.font = "800 15px system-ui, sans-serif"; g.fillStyle = s.med >= 0 ? UP : DOWN; g.fillText(pct(s.med), x0 + sw / 2, Y + AMP + 45); }
       g.font = "12px system-ui, sans-serif"; g.fillStyle = MUTED; g.fillText(s.up + " of " + s.n + " up", x0 + sw / 2, Y + AMP + 61);
       if (s.eur != null) {   // 100 euros split equally over every company of the category at the start of the period
-        g.fillStyle = MUTED; g.fillText("\u20ac100 became", x0 + sw / 2, Y + AMP + 76);
+        g.fillStyle = MUTED; g.fillText(CUR + "100 became", x0 + sw / 2, Y + AMP + 76);
         g.font = "800 14px system-ui, sans-serif"; g.fillStyle = s.eur >= 100 ? UP : DOWN; g.fillText(eur(s.eur), x0 + sw / 2, Y + AMP + 91 - 1);
       }
     });
@@ -131,8 +135,8 @@
         g.textAlign = "center"; g.textBaseline = "alphabetic";
         g.font = "600 12.5px system-ui, sans-serif"; g.fillStyle = INK; g.fillText(f.s, cx, Y2 + A2 + 18);
         g.font = "800 15px system-ui, sans-serif"; g.fillStyle = shownV >= 0 ? UP : DOWN; g.fillText(pct(shownV), cx, Y2 + A2 + 36);
-        g.font = "12px system-ui, sans-serif"; g.fillStyle = MUTED; g.fillText("\u20ac100 became", cx, Y2 + A2 + 51);
-        g.font = "800 14px system-ui, sans-serif"; g.fillStyle = shownV >= 0 ? UP : DOWN; g.fillText(eur(100 * (1 + shownV)), cx, Y2 + A2 + 66);
+        g.font = "12px system-ui, sans-serif"; g.fillStyle = MUTED; g.fillText(CUR + "100 became", cx, Y2 + A2 + 51);
+        g.font = "800 14px system-ui, sans-serif"; const fe = 100 * (1 + shownV) * fxf(); g.fillStyle = fe >= 100 ? UP : DOWN; g.fillText(eur(fe), cx, Y2 + A2 + 66);
       });
       g.fillStyle = INK; g.fillRect(AX, Y2 - 1, W - AX, 2);
     }
@@ -141,10 +145,10 @@
 
   function lead(st) {
     const P = PERIODS[period], up = st.reduce((a, s) => a + s.up, 0), n = st.reduce((a, s) => a + s.n, 0);
-    const allV = cells.map(val).filter((x) => x != null), allEur = 100 * (1 + allV.reduce((a, x) => a + x, 0) / allV.length);
+    const allV = cells.map(val).filter((x) => x != null), allEur = 100 * (1 + allV.reduce((a, x) => a + x, 0) / allV.length) * fxf();
     const ok = st.filter((s) => s.med != null).sort((a, b) => b.med - a.med), liveN = Object.keys(live).length;
     box.querySelector("#sig-lead").innerHTML = `<b>${up} of ${n}</b> companies went up ${P[2]}. Strongest category: <b>${ok[0].nm}</b> (<b class="${ok[0].med >= 0 ? "up" : "down"}">${pct(ok[0].med)}</b>). Weakest: <b>${ok[ok.length - 1].nm}</b> (<b class="${ok[ok.length - 1].med >= 0 ? "up" : "down"}">${pct(ok[ok.length - 1].med)}</b>).`
-      + ` \u20ac100 split over all ${n} companies became <b class="${allEur >= 100 ? "up" : "down"}">${eur(allEur)}</b>.`
+      + ` ${CUR}100 split over all ${n} companies became <b class="${allEur >= 100 ? "up" : "down"}">${eur(allEur)}</b>.`
       + (liveN ? ` <span class="count">live prices in ${liveN} companies</span>` : "");
   }
 
