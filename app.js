@@ -396,11 +396,14 @@
   // is the New York stock exchange open right now? (Monday to Friday, 9:30 to 16:00 New York time, except holidays)
   // days the New York Stock Exchange is closed (2026 and 2027)
   const HOLIDAYS = ["2026-11-26", "2026-12-25", "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"];
+  // days the exchange closes early, at 13:00 New York time (from the NYSE calendar)
+  const EARLY_CLOSE = ["2026-11-27", "2026-12-24", "2027-11-26"];
   function marketOpen() {
     const ny = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
     const mins = ny.getHours() * 60 + ny.getMinutes();
     const day = ny.getFullYear() + "-" + String(ny.getMonth() + 1).padStart(2, "0") + "-" + String(ny.getDate()).padStart(2, "0");
-    return ny.getDay() >= 1 && ny.getDay() <= 5 && mins >= 570 && mins < 960 && !HOLIDAYS.includes(day);
+    const close = EARLY_CLOSE.includes(day) ? 780 : 960;   // 13:00 on early-close days, otherwise 16:00 New York time
+    return ny.getDay() >= 1 && ny.getDay() <= 5 && mins >= 570 && mins < close && !HOLIDAYS.includes(day);
   }
   function marketNote() {
     const open = marketOpen(), key = !!getKey();
